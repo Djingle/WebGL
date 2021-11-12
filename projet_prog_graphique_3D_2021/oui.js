@@ -2,9 +2,9 @@
 "use strict"
 
 //--------------------------------------------------------------------------------------------------------
-// VERTEX SHADER (GLSL language)
+// TERRAIN
 //--------------------------------------------------------------------------------------------------------
-var vertexShader =
+var vertexShaderTerrain =
 `#version 300 es
 
 // INPUT
@@ -13,7 +13,6 @@ layout(location = 1) in vec2 position_in;
 // UNIFORM
 uniform mat4 uProjectionMatrix;
 uniform mat4 uViewMatrix;
-uniform mat4 uModelMatrix;
 // - texture
 uniform sampler2D uSampler;
 
@@ -43,14 +42,11 @@ void main()
 	// position.z += terrainHeight + turbulence / 4.0; // tune the height of turbulence
 	
 	// - write position
-	gl_Position = uProjectionMatrix * uViewMatrix * uModelMatrix * vec4(position, 1.0);
+	gl_Position = uProjectionMatrix * uViewMatrix * vec4(position, 1.0);
 }
 `;
 
-//--------------------------------------------------------------------------------------------------------
-// FRAGMENT SHADER (GLSL language)
-//--------------------------------------------------------------------------------------------------------
-var fragmentShader =
+var fragmentShaderTerrain =
 `#version 300 es
 precision highp float;
 
@@ -69,42 +65,75 @@ uniform sampler2D uSampler;
 void main()
 {
 	vec4 textureColor = texture(uSampler, v_textureCoord);
-	
+
 	// MANDATORY
 	// - a fragment shader MUST write an RGBA color
-	oFragmentColor = vec4(uMeshColor * textureColor.rgb, 1); // [values are between 0.0 and 1.0]
+	oFragmentColor = vec4(uMeshColor * textureColor.rgb, 1.0); // [values are between 0.0 and 1.0]
+}
+`;
+
+
+//--------------------------------------------------------------------------------------------------------
+// WATER
+//--------------------------------------------------------------------------------------------------------
+var vertexShaderWater =
+`#version 300 es
+precision highp float;
+
+// INPUT
+layout(location = 1) in vec2 position_in;
+
+// OUTPUT
+
+// UNIFORM
+uniform mat4 uProjectionMatrix;
+uniform mat4 uViewMatrix;
+
+
+void main()
+{
+	vec3 position = vec3(position_in, 100);
+	gl_Position = uProjectionMatrix * uViewMatrix * vec4(position, 1.0);
+}
+`;
+
+var fragmentShaderWater =
+`#version 300 es
+precision highp float;
+
+
+
+out vec4 oFragmentColor;
+
+void main()
+{
+	oFragmentColor = vec4(66, 16, 230, 1.0);
 }
 `;
 
 //--------------------------------------------------------------------------------------------------------
 // Global variables
 //--------------------------------------------------------------------------------------------------------
-var shaderProgram = null;
-var vao = null;
+var shaderProgramTerrain = null;
+var shaderProgramWater = null;
+var vaoTerrain = null;
+var vaoWater = null;
 var texture = null;
-// GUI (graphical user interface)
-// - mesh color
-var slider_r;
-var slider_g;
-var slider_b;
+
+
 // Terrain
-var jMax = 10;
-var iMax = 10;
+var jMax = 100;
+var iMax = 100;
 var nbMeshIndices = 0;
-var slider_terrainWidth;
-var slider_terrainHeight;
-// - rendering
-var checkbox_wireframe;
 
 //--------------------------------------------------------------------------------------------------------
 // Build mesh
 //--------------------------------------------------------------------------------------------------------
-function buildMesh()
-{
-	iMax = slider_terrainWidth.value;
-	jMax = slider_terrainHeight.value;
 
-	gl.deleteVertexArray(vao);
+
+function buildTerrain()
+{
+	gl.deleteVertexArray(vaoTerrain);
 
 	// Create ande initialize a vertex buffer object (VBO) [it is a buffer of generic user data: positions, normals, texture coordinates, temperature, etc...]
 	// - create data on CPU
@@ -161,9 +190,9 @@ function buildMesh()
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
 	
 	// Create ande initialize a vertex array object (VAO) [it is a "container" of vertex buffer objects (VBO)]
-	vao = gl.createVertexArray();
+	vaoTerrain = gl.createVertexArray();
 	// - bind "current" VAO
-	gl.bindVertexArray(vao);
+	gl.bindVertexArray(vaoTerrain);
 	// - bind "current" VBO
 	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions);
 	// - attach VBO to VAO
@@ -182,7 +211,77 @@ function buildMesh()
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null); // BEWARE: only unbind the EBO after unbinding the VAO !
 
 	// HACK...
-	update_wgl();
+	//update_wgl();
+}
+
+function buildWater()
+{
+	gl.deleteVertexArray(vaoWater);
+
+	// Create ande initialize a vertex buffer object (VBO) [it is a buffer of generic user data: positions, normals, texture coordinates, temperature, etc...]
+	// - create data on CPU
+	// - this is the geometry of your object)
+	// - we store 2D positions as 1D array : (x0,y0,x1,y1,x2,y2,x3,y3)
+	// - for a terrain: a grid of 2D points in [0.0;1.0]
+	let data_positions = new Float32Array(8);
+	data_positions[0] = 0;
+	data_positions[1] = 0;
+	data_positions[2] = 1;
+	data_positions[3] = 0;
+	data_positions[4] = 1;
+	data_positions[5] = 1;
+	data_positions[6] = 0;
+	data_positions[7] = 1;
+	
+	// - create a VBO (kind of memory pointer or handle on GPU)
+	let vbo_positions = gl.createBuffer();
+	// - bind "current" VBO
+	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions); 
+	// - allocate memory on GPU (size of data) and send data from CPU to GPU
+	gl.bufferData(gl.ARRAY_BUFFER, data_positions, gl.STATIC_DRAW);
+	// - reset GL state
+	gl.bindBuffer(gl.ARRAY_BUFFER, null);
+	
+	// Create ande initialize an element buffer object (EBO) [it is a buffer of generic user data: positions, normals, texture coordinates, temperature, etc...]
+	// - create data on CPU
+	// - this is the geometry of your object)
+	// - we store 2D position "indices" as 1D array of "triangle" indices : (i0,j0,k0, i1,j1,k1, i2,j2,k2, ...)
+	let ebo_data = new Float32Array(6)
+	ebo_data[0] = 0;
+	ebo_data[1] = 1;
+	ebo_data[2] = 3;
+	ebo_data[3] = 1;
+	ebo_data[4] = 2;
+	ebo_data[5] = 3;
+	
+	let ebo = gl.createBuffer();
+	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+	gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, ebo_data, gl.STATIC_DRAW);
+	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+	
+	// Create and initialize a vertex array object (VAO) [it is a "container" of vertex buffer objects (VBO)]
+	vaoWater = gl.createVertexArray();
+	// - bind "current" VAO
+	gl.bindVertexArray(vaoWater);
+	// - bind "current" VBO
+	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions);
+	// - attach VBO to VAO
+	let vertexAttributeID = 1; // specifies the "index" of the generic vertex attribute to be modified
+	let dataSize = 2; // 2 for 2D positions. Specifies the number of components per generic vertex attribute. Must be 1, 2, 3, 4.
+	let dataType = gl.FLOAT; // data type
+	gl.vertexAttribPointer(vertexAttributeID, dataSize, dataType, false, 0, 0); // unused parameters for the moment (normalized, stride, pointer)
+	// - enable the use of VBO. It enable or disable a generic vertex attribute array
+	gl.enableVertexAttribArray(vertexAttributeID);
+	// - bind "current" EBO
+	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+	
+	// Reset GL states
+	gl.bindVertexArray(null);
+	gl.bindBuffer(gl.ARRAY_BUFFER, null); // BEWARE: only unbind the VBO after unbinding the VAO !
+	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null); // BEWARE: only unbind the EBO after unbinding the VAO !
+
+	// HACK...
+	//update_wgl();
 }
 
 //--------------------------------------------------------------------------------------------------------
@@ -193,35 +292,18 @@ function init_wgl()
 	// ANIMATIONS // [=> Sylvain's API]
 	ewgl.continuous_update = true;
 	
-	// CUSTOM USER INTERFACE
-	UserInterface.begin();
-		// MESH COLOR
-		UserInterface.use_field_set('H', "Mesh Color");
-		slider_r = UserInterface.add_slider('R ', 0, 100, 0, update_wgl);
-		slider_g = UserInterface.add_slider('G ', 0, 100, 100, update_wgl);
-		slider_b = UserInterface.add_slider('B ', 0, 100, 100, update_wgl);
-		UserInterface.end_use();
-		// TERRAIN
-		UserInterface.use_field_set('H', "Terrain Generator");
-		slider_terrainWidth = UserInterface.add_slider('Width', 2, 100, 50, buildMesh);
-		slider_terrainHeight = UserInterface.add_slider('Height', 2, 100, 50, buildMesh);
-		UserInterface.end_use();
-		// RENDERING
-		UserInterface.use_field_set('H', "RENDERING Mode");
-			checkbox_wireframe  = UserInterface.add_check_box('wireframe', false, update_wgl);
-		UserInterface.end_use();
-	UserInterface.end();
-	
 	// Create and initialize a shader program // [=> Sylvain's API - wrapper of GL code]
-	shaderProgram = ShaderProgram(vertexShader, fragmentShader, 'basic shader');
+	shaderProgramTerrain = ShaderProgram(vertexShaderTerrain, fragmentShaderTerrain, 'terrain shader');
+	shaderProgramWater = ShaderProgram(vertexShaderWater, fragmentShaderWater, 'water shader');
 
 	// Build mesh
-	buildMesh();
+	buildTerrain();
+	buildWater();
 	
 	// TEXTURE
 	texture = gl.createTexture();
 	const image = new Image();
-    image.src = 'images/heightmap.png';
+    image.src = 'textures/heightmap.png';
     image.onload = () => {
 	    
 		// Bind texture as the "current" one
@@ -266,8 +348,7 @@ function init_wgl()
 // Render scene
 //--------------------------------------------------------------------------------------------------------
 function draw_wgl()
-{
-	// --------------------------------
+{	// --------------------------------
 	// [1] - always do that
 	// --------------------------------
 	
@@ -277,17 +358,26 @@ function draw_wgl()
 	// --------------------------------
 	// [2] - render your scene
 	// --------------------------------
+	var pMat = ewgl.scene_camera.get_projection_matrix();
+	var vMat = ewgl.scene_camera.get_view_matrix();
+
+
+	shaderProgramWater.bind();
+
+
+	Uniforms.uProjectionMatrix = pMat;
+	Uniforms.uViewMatrix = vMat;
+	gl.bindVertexArray(vaoWater);
+	gl.drawElements(gl.TRIANGLES, 6, gl.UNISIGNED_INT, 0);
 	
 	// Set "current" shader program
-	shaderProgram.bind(); // [=> Sylvain's API - wrapper of GL code]
+	shaderProgramTerrain.bind(); // [=> Sylvain's API - wrapper of GL code]
 
 	// Set uniforms // [=> Sylvain's API - wrapper of GL code]
-	Uniforms.uMeshColor = [slider_r.value/100, slider_g.value/100, slider_b.value/100];
+	Uniforms.uMeshColor = [230/255, 66/255, 16/255];
 	// - transformation matrix
-	Uniforms.uProjectionMatrix = ewgl.scene_camera.get_projection_matrix();
-	Uniforms.uViewMatrix = ewgl.scene_camera.get_view_matrix();
-	let maxRotationAngle = 45.0;
-	Uniforms.uModelMatrix = Matrix.rotateZ(maxRotationAngle * Math.sin(ewgl.current_time)); 
+	Uniforms.uProjectionMatrix = pMat;
+	Uniforms.uViewMatrix = vMat;
 	
 	// Activate texture
 	// - set GL state
@@ -297,35 +387,12 @@ function draw_wgl()
 	Uniforms.uSampler = 0;
 
 	// Bind "current" vertex array (VAO)
-	gl.bindVertexArray(vao);
-
-	// - rendering mode
-	let drawMode = gl.TRIANGLES;
-	if (checkbox_wireframe.checked)
-	{
-		Uniforms.uMeshColor = [1.0, 1.0, 1.0];
-		drawMode = gl.LINES;
-	}
-
-	// Change the viewport to render only in a part of the window
-	gl.viewport(0, gl.canvas.height / 3, gl.canvas.width / 1.5, gl.canvas.height / 1.5);
+	gl.bindVertexArray(vaoTerrain);
 	
 	// Draw commands
-	gl.drawElements(drawMode, nbMeshIndices, gl.UNSIGNED_INT, 0);
+	gl.drawElements(gl.TRIANGLES, nbMeshIndices, gl.UNSIGNED_INT, 0);
 
-	// Change the viewport to render only in a part of the window
-	gl.viewport(gl.canvas.width / 3, 0, gl.canvas.width / 1.5, gl.canvas.height / 1.5);
-
-	// - render primitives of type "lines"
-	// ---- change "current" color
 	Uniforms.uMeshColor = [1.0, 1.0, 1.0];
-	gl.disable(gl.DEPTH_TEST);
-	gl.drawElements(gl.LINES, nbMeshIndices, gl.UNSIGNED_INT, 0);
-	gl.enable(gl.DEPTH_TEST);
-	
-	// reset the viewport
-	// gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-
 	
 	// Reset GL state(s)
 	// - unbind vertex array
