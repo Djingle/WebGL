@@ -81,7 +81,7 @@ var vertexShaderWater =
 precision highp float;
 
 // INPUT
-layout(location = 1) in vec2 position_in;
+layout(location = 0) in vec2 position_in;
 
 // OUTPUT
 
@@ -152,9 +152,9 @@ function buildTerrain()
 	    }
 	}
 	// - create a VBO (kind of memory pointer or handle on GPU)
-	let vbo_positions = gl.createBuffer();
+	let vbo_positions_t = gl.createBuffer();
 	// - bind "current" VBO
-	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions); 
+	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions_t); 
 	// - allocate memory on GPU (size of data) and send data from CPU to GPU
 	gl.bufferData(gl.ARRAY_BUFFER, data_positions, gl.STATIC_DRAW);
 	// - reset GL state
@@ -194,7 +194,7 @@ function buildTerrain()
 	// - bind "current" VAO
 	gl.bindVertexArray(vaoTerrain);
 	// - bind "current" VBO
-	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions);
+	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions_t);
 	// - attach VBO to VAO
 	let vertexAttributeID = 1; // specifies the "index" of the generic vertex attribute to be modified
 	let dataSize = 2; // 2 for 2D positions. Specifies the number of components per generic vertex attribute. Must be 1, 2, 3, 4.
@@ -211,7 +211,7 @@ function buildTerrain()
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null); // BEWARE: only unbind the EBO after unbinding the VAO !
 
 	// HACK...
-	//update_wgl();
+	update_wgl();
 }
 
 function buildWater()
@@ -234,9 +234,9 @@ function buildWater()
 	data_positions[7] = 1;
 	
 	// - create a VBO (kind of memory pointer or handle on GPU)
-	let vbo_positions = gl.createBuffer();
+	let vbo_positions_w = gl.createBuffer();
 	// - bind "current" VBO
-	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions); 
+	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions_w); 
 	// - allocate memory on GPU (size of data) and send data from CPU to GPU
 	gl.bufferData(gl.ARRAY_BUFFER, data_positions, gl.STATIC_DRAW);
 	// - reset GL state
@@ -264,9 +264,9 @@ function buildWater()
 	// - bind "current" VAO
 	gl.bindVertexArray(vaoWater);
 	// - bind "current" VBO
-	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions);
+	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions_w);
 	// - attach VBO to VAO
-	let vertexAttributeID = 1; // specifies the "index" of the generic vertex attribute to be modified
+	let vertexAttributeID = 0; // specifies the "index" of the generic vertex attribute to be modified
 	let dataSize = 2; // 2 for 2D positions. Specifies the number of components per generic vertex attribute. Must be 1, 2, 3, 4.
 	let dataType = gl.FLOAT; // data type
 	gl.vertexAttribPointer(vertexAttributeID, dataSize, dataType, false, 0, 0); // unused parameters for the moment (normalized, stride, pointer)
@@ -281,7 +281,7 @@ function buildWater()
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null); // BEWARE: only unbind the EBO after unbinding the VAO !
 
 	// HACK...
-	//update_wgl();
+	update_wgl();
 }
 
 //--------------------------------------------------------------------------------------------------------
@@ -364,12 +364,13 @@ function draw_wgl()
 
 	shaderProgramWater.bind();
 
-
 	Uniforms.uProjectionMatrix = pMat;
 	Uniforms.uViewMatrix = vMat;
+
 	gl.bindVertexArray(vaoWater);
-	gl.drawElements(gl.TRIANGLES, 6, gl.UNISIGNED_INT, 0);
-	
+	gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
+
+    
 	// Set "current" shader program
 	shaderProgramTerrain.bind(); // [=> Sylvain's API - wrapper of GL code]
 
@@ -393,6 +394,7 @@ function draw_wgl()
 	gl.drawElements(gl.TRIANGLES, nbMeshIndices, gl.UNSIGNED_INT, 0);
 
 	Uniforms.uMeshColor = [1.0, 1.0, 1.0];
+    
 	
 	// Reset GL state(s)
 	// - unbind vertex array
