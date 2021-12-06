@@ -9,7 +9,8 @@ var vertexShaderTerrain =
 
 // INPUT
 layout(location=1) in vec2 position_in;
-layout(location=2) in vec3 normal_in;
+
+vec3 calculateNormal(vec2 texcoord, )
 
 // UNIFORM
 uniform mat4 uProjectionMatrix;
@@ -280,11 +281,9 @@ function buildTerrain()
 	    for (let i = 0; i < iMax; i++)
 	    {
 			// x
-			data_positions[3 * (i + j * iMax)] = i / (iMax - 1);
-			// y
-            //TODO
-            //z
-            data_positions[3 * (i + j * iMax) + 2] = j / (jMax - 1);
+			data_positions[2 * (i + j * iMax)] = i / (iMax - 1);
+            // z
+            data_positions[2 * (i + j * iMax) + 2] = j / (jMax - 1);
 	    }
 	}
 
@@ -519,7 +518,7 @@ function draw_wgl()
 
 
     /////////////////////////////////////////////
-    shaderProgramSky.bind();
+    shaderProgramSky.bind(); // SKY /////////////
     /////////////////////////////////////////////
 
     Uniforms.uvpmat = ewgl.scene_camera.get_matrix_for_skybox()
@@ -530,7 +529,7 @@ function draw_wgl()
     
 
     /////////////////////////////////////////////
-	shaderProgramWater.bind();
+	shaderProgramWater.bind(); // WATER /////////
     /////////////////////////////////////////////
 
 	var pMat = ewgl.scene_camera.get_projection_matrix();
@@ -545,7 +544,7 @@ function draw_wgl()
 
     
     /////////////////////////////////////////////
-	shaderProgramTerrain.bind();
+	shaderProgramTerrain.bind(); // TERRAIN /////
     /////////////////////////////////////////////
 
     
@@ -556,6 +555,8 @@ function draw_wgl()
     Uniforms.uNormalMatrix = nvm.inverse3transpose();
     Uniforms.uLightIntensity = [128.0, 128.0, 128.0];
     Uniforms.uLightPosition = [1.0,1.0,1.0];
+	Uniforms.uHeight = jMax;
+	Uniforms.uWidth = iMax;
 	
 
   	gl.activeTexture(gl.TEXTURE0);
