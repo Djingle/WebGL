@@ -8,39 +8,38 @@ var vertexShaderTerrain =
 `#version 300 es
 
 // INPUT
-layout(location = 1) in vec2 position_in;
+layout(location=1) in vec2 position_in;
+layout(location=2) in vec3 normal_in;
 
 // UNIFORM
 uniform mat4 uProjectionMatrix;
 uniform mat4 uViewMatrix;
+uniform mat3 uNormalMatrix;
+
 // - texture
 uniform sampler2D uSampler;
 
 // OUTPUT
 out vec2 v_textureCoord;
-
-// FUNCTIONS
-// - one can define function
-// - here, is it a noise function that create random values in [-1.0;1.0] given a position in [0.0;1.0]
-float noise(vec2 st)
-{
-    return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
-}
+out vec3 v_pos;
+out vec3 v_nor;
 
 // MAIN PROGRAM
 void main()
 {	
 	vec2 uv = position_in;
 	v_textureCoord = uv;
-	
-	vec3 position = vec3(2.0 * position_in - 1.0, 0.0);
+
+	vec3 position = vec3(2.0*position_in.x-1.0, 0.0, 2.0*position_in.y-1.0);
 	
 	float terrainHeight = texture(uSampler, uv).r;
-	position.z += terrainHeight;
-	// add turbulence in height
-	// float turbulence = noise(position_in);
-	// position.z += terrainHeight + turbulence / 4.0; // tune the height of turbulence
+	position.y += terrainHeight;
+
+    v_pos = (uViewMatrix * vec4(position, 1.0)).xyz;
+    v_nor = normalize(uNormalMatrix * normal_in);
 	
+
+
 	// - write position
 	gl_Position = uProjectionMatrix * uViewMatrix * vec4(position, 1.0);
 }
@@ -50,25 +49,52 @@ var fragmentShaderTerrain =
 `#version 300 es
 precision highp float;
 
+#define M_PI 3.14159265358979
+
 // INPUT
 in vec2 v_textureCoord;
+in vec3 v_pos;
+in vec3 v_nor;
 
 // OUTPUT
 out vec4 oFragmentColor;
 
 // UNIFORM
+// - color
 uniform vec3 uMeshColor;
+
+// - light information
+uniform float uLightIntensity;
+uniform vec3 uLightPosition;
+
 // - texture
 uniform sampler2D uSampler;
 
-// MAIN PROGRAM
 void main()
 {
+    vec3 p = v_pos;
+    vec3 n = normalize(v_nor);
+
+    vec3 Ka = uMeshColor.rgb;
+    vec3 Kd = uMeshColor.rgb;
+
+    vec3 Ia = uLightIntensity * Ka;
+
+    vec3 lightDir = uLightPosition - p;
+    float d2 = dot(lightDir, lightDir);
+    lightDir /= sqrt(d2);
+    float diffuse = max(0.0, dot(n, lightDir));
+    vec3 Id = (uLightIntensity / d2) * Kd * vec3(diffuse);
+    Id /= M_PI;
+
 	vec4 textureColor = texture(uSampler, v_textureCoord);
+
+    oFragmentColor =  vec4((0.5 * Ia) * (0.5 * Id), 1.0);
+
 
 	// MANDATORY
 	// - a fragment shader MUST write an RGBA color
-	oFragmentColor = vec4(uMeshColor * textureColor.rgb, 1.0); // [values are between 0.0 and 1.0]
+	//oFragmentColor = vec4(uMeshColor * textureColor.rgb, 1.0); // [values are between 0.0 and 1.0]
 }
 `;
 
@@ -92,7 +118,7 @@ uniform mat4 uViewMatrix;
 
 void main()
 {
-	vec3 position = vec3(position_in, 100);
+	vec3 position = vec3(position_in.x, 0.45, position_in.y);
 	gl_Position = uProjectionMatrix * uViewMatrix * vec4(position, 1.0);
 }
 `;
@@ -111,20 +137,134 @@ void main()
 }
 `;
 
+
+
+//--------------------------------------------------------------------------------------------------------
+// SKY
+//--------------------------------------------------------------------------------------------------------
+var vertexShaderSky =
+`#version 300 es
+precision highp float;
+
+layout(location=0) in vec3 position_in;
+uniform mat4 uvpmat;
+out vec3 v_position;
+
+void main()
+{
+    v_position = position_in;
+    gl_Position = uvpmat * vec4(position_in, 1);
+}
+`;
+
+var fragmentShaderSky = 
+`#version 300 es
+precision highp float;
+
+uniform samplerCube tu;
+
+in vec3 v_position;
+
+out vec4 oFragmentColor;
+
+void main()
+{
+    oFragmentColor = texture(tu, v_position);
+}
+`;
+
+
 //--------------------------------------------------------------------------------------------------------
 // Global variables
 //--------------------------------------------------------------------------------------------------------
 var shaderProgramTerrain = null;
 var shaderProgramWater = null;
+var shaderProgramSky = null;
+
 var vaoTerrain = null;
 var vaoWater = null;
+
 var texture = null;
+
+var cube_rend;
+var skybox = null;
 
 
 // Terrain
 var jMax = 100;
 var iMax = 100;
 var nbMeshIndices = 0;
+
+
+//--------------------------------------------------------------------------------------------------------
+// Calculate normals
+//--------------------------------------------------------------------------------------------------------
+function calculateNormals(vs, ind)
+{
+    const
+      x = 0,
+      y = 1,
+      z = 2,
+      ns = [];
+
+    // For each vertex, initialize normal x, normal y, normal z
+    for (let i = 0; i < vs.length; i += 3) {
+      ns[i + x] = 0.0;
+      ns[i + y] = 0.0;
+      ns[i + z] = 0.0;
+    }
+
+    // We work on triads of vertices to calculate
+    for (let i = 0; i < ind.length; i += 3) {
+      // Normals so i = i+3 (i = indices index)
+      const v1 = [], v2 = [], normal = [];
+
+      // p2 - p1
+      v1[x] = vs[3 * ind[i + 2] + x] - vs[3 * ind[i + 1] + x];
+      v1[y] = vs[3 * ind[i + 2] + y] - vs[3 * ind[i + 1] + y];
+      v1[z] = vs[3 * ind[i + 2] + z] - vs[3 * ind[i + 1] + z];
+
+      // p0 - p1
+      v2[x] = vs[3 * ind[i] + x] - vs[3 * ind[i + 1] + x];
+      v2[y] = vs[3 * ind[i] + y] - vs[3 * ind[i + 1] + y];
+      v2[z] = vs[3 * ind[i] + z] - vs[3 * ind[i + 1] + z];
+
+      // Cross product by Sarrus Rule
+      normal[x] = v1[y] * v2[z] - v1[z] * v2[y];
+      normal[y] = v1[z] * v2[x] - v1[x] * v2[z];
+      normal[z] = v1[x] * v2[y] - v1[y] * v2[x];
+
+      // Update the normals of that triangle: sum of vectors
+      for (let j = 0; j < 3; j++) {
+        ns[3 * ind[i + j] + x] = ns[3 * ind[i + j] + x] + normal[x];
+        ns[3 * ind[i + j] + y] = ns[3 * ind[i + j] + y] + normal[y];
+        ns[3 * ind[i + j] + z] = ns[3 * ind[i + j] + z] + normal[z];
+      }
+    }
+
+    // Normalize the result.
+    // The increment here is because each vertex occurs.
+    for (let i = 0; i < vs.length; i += 3) {
+      // With an offset of 3 in the array (due to x, y, z contiguous values)
+      const nn = [];
+      nn[x] = ns[i + x];
+      nn[y] = ns[i + y];
+      nn[z] = ns[i + z];
+
+      let len = Math.sqrt((nn[x] * nn[x]) + (nn[y] * nn[y]) + (nn[z] * nn[z]));
+      if (len === 0) len = 1.0;
+
+      nn[x] = nn[x] / len;
+      nn[y] = nn[y] / len;
+      nn[z] = nn[z] / len;
+
+      ns[i + x] = nn[x];
+      ns[i + y] = nn[y];
+      ns[i + z] = nn[z];
+    }
+
+    return ns;
+  }
 
 //--------------------------------------------------------------------------------------------------------
 // Build mesh
@@ -134,23 +274,48 @@ var nbMeshIndices = 0;
 function buildTerrain()
 {
 	gl.deleteVertexArray(vaoTerrain);
-
-	// Create ande initialize a vertex buffer object (VBO) [it is a buffer of generic user data: positions, normals, texture coordinates, temperature, etc...]
-	// - create data on CPU
-	// - this is the geometry of your object)
-	// - we store 2D positions as 1D array : (x0,y0,x1,y1,x2,y2,x3,y3)
-	// - for a terrain: a grid of 2D points in [0.0;1.0]
-	let data_positions = new Float32Array(iMax * jMax * 2);
+	let data_positions = new Float32Array(iMax * jMax * 3);
 	for (let j = 0; j < jMax; j++)
 	{
 	    for (let i = 0; i < iMax; i++)
 	    {
 			// x
-			data_positions[2 * (i + j * iMax)] = i / (iMax - 1);
+			data_positions[3 * (i + j * iMax)] = i / (iMax - 1);
 			// y
-			data_positions[2 * (i + j * iMax) + 1] = j / (jMax - 1);
+            //TODO
+            //z
+            data_positions[3 * (i + j * iMax) + 2] = j / (jMax - 1);
 	    }
 	}
+
+    let nbMeshQuads = (iMax - 1) * (jMax - 1);
+	let nbMeshTriangles = 2 * nbMeshQuads;
+	nbMeshIndices = 3 * nbMeshTriangles;
+	let current_quad = 0;
+	let data_indices = new Uint32Array(nbMeshIndices);
+	for (let j = 0; j < jMax - 1; j++)
+	{
+	    for (let i = 0; i < iMax - 1; i++)
+	    {
+		   	// triangle 1
+			data_indices[6 * current_quad] = i + j * iMax;
+			data_indices[6 * current_quad + 1] = (i + 1) + j * iMax;
+			data_indices[6 * current_quad + 2] = i + (j + 1) * iMax;
+			// triangle 2
+			data_indices[6 * current_quad + 3] = i + (j + 1) * iMax;
+			data_indices[6 * current_quad + 4] = (i + 1) + j * iMax;
+			data_indices[6 * current_quad + 5] = (i + 1) + (j + 1) * iMax;
+			current_quad++;
+	    }
+	}
+
+    let data_normals = new Float32Array(nbMeshIndices);
+    let data_normals1 = calculateNormals(data_positions, data_indices);
+    data_normals = calculateNormals(data_positions, data_indices);
+    console.log(data_normals.length + ',' + data_normals1.length)
+    console.log(data_normals[0] + ',' + data_normals[1] + ',' + data_normals[2])
+
+    
 	// - create a VBO (kind of memory pointer or handle on GPU)
 	let vbo_positions_t = gl.createBuffer();
 	// - bind "current" VBO
@@ -159,49 +324,39 @@ function buildTerrain()
 	gl.bufferData(gl.ARRAY_BUFFER, data_positions, gl.STATIC_DRAW);
 	// - reset GL state
 	gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+    let vbo_normals = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo_normals);
+    gl.bufferData(gl.ARRAY_BUFFER, data_normals, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
 	
 	// Create ande initialize an element buffer object (EBO) [it is a buffer of generic user data: positions, normals, texture coordinates, temperature, etc...]
 	// - create data on CPU
 	// - this is the geometry of your object)
 	// - we store 2D position "indices" as 1D array of "triangle" indices : (i0,j0,k0, i1,j1,k1, i2,j2,k2, ...)
-	let nbMeshQuads = (iMax - 1) * (jMax - 1);
-	let nbMeshTriangles = 2 * nbMeshQuads;
-	nbMeshIndices = 3 * nbMeshTriangles;
-	let ebo_data = new Uint32Array(nbMeshIndices);
-	let current_quad = 0;
-	for (let j = 0; j < jMax - 1; j++)
-	{
-	    for (let i = 0; i < iMax - 1; i++)
-	    {
-		   	// triangle 1
-			ebo_data[6 * current_quad] = i + j * iMax;
-			ebo_data[6 * current_quad + 1] = (i + 1) + j * iMax;
-			ebo_data[6 * current_quad + 2] = i + (j + 1) * iMax;
-			// triangle 2
-			ebo_data[6 * current_quad + 3] = i + (j + 1) * iMax;
-			ebo_data[6 * current_quad + 4] = (i + 1) + j * iMax;
-			ebo_data[6 * current_quad + 5] = (i + 1) + (j + 1) * iMax;
-			current_quad++;
-	    }
-	}
+	
 	let ebo = gl.createBuffer();
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
-	gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, ebo_data, gl.STATIC_DRAW);
+	gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data_indices, gl.STATIC_DRAW);
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
 	
-	// Create ande initialize a vertex array object (VAO) [it is a "container" of vertex buffer objects (VBO)]
-	vaoTerrain = gl.createVertexArray();
-	// - bind "current" VAO
+
+    vaoTerrain = gl.createVertexArray();
 	gl.bindVertexArray(vaoTerrain);
-	// - bind "current" VBO
 	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions_t);
-	// - attach VBO to VAO
 	let vertexAttributeID = 1; // specifies the "index" of the generic vertex attribute to be modified
 	let dataSize = 2; // 2 for 2D positions. Specifies the number of components per generic vertex attribute. Must be 1, 2, 3, 4.
 	let dataType = gl.FLOAT; // data type
 	gl.vertexAttribPointer(vertexAttributeID, dataSize, dataType, false, 0, 0); // unused parameters for the moment (normalized, stride, pointer)
-	// - enable the use of VBO. It enable or disable a generic vertex attribute array
+    gl.enableVertexAttribArray(vertexAttributeID);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo_normals);
+    vertexAttributeID = 2;
+    dataSize = 3;
+    dataType = gl.FLOAT;
+    gl.vertexAttribPointer(vertexAttributeID, dataSize, dataType, false, 0, 0);
 	gl.enableVertexAttribArray(vertexAttributeID);
+
 	// - bind "current" EBO
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
 	
@@ -224,13 +379,13 @@ function buildWater()
 	// - we store 2D positions as 1D array : (x0,y0,x1,y1,x2,y2,x3,y3)
 	// - for a terrain: a grid of 2D points in [0.0;1.0]
 	let data_positions = new Float32Array(8);
-	data_positions[0] = 0;
-	data_positions[1] = 0;
+	data_positions[0] = -1;
+	data_positions[1] = -1;
 	data_positions[2] = 1;
-	data_positions[3] = 0;
+	data_positions[3] = -1;
 	data_positions[4] = 1;
 	data_positions[5] = 1;
-	data_positions[6] = 0;
+	data_positions[6] = -1;
 	data_positions[7] = 1;
 	
 	// - create a VBO (kind of memory pointer or handle on GPU)
@@ -246,17 +401,17 @@ function buildWater()
 	// - create data on CPU
 	// - this is the geometry of your object)
 	// - we store 2D position "indices" as 1D array of "triangle" indices : (i0,j0,k0, i1,j1,k1, i2,j2,k2, ...)
-	let ebo_data = new Float32Array(6)
-	ebo_data[0] = 0;
-	ebo_data[1] = 1;
-	ebo_data[2] = 3;
-	ebo_data[3] = 1;
-	ebo_data[4] = 2;
-	ebo_data[5] = 3;
+	let data_indices = new Uint32Array(6)
+	data_indices[0] = 0;
+	data_indices[1] = 1;
+	data_indices[2] = 3;
+	data_indices[3] = 1;
+	data_indices[4] = 2;
+	data_indices[5] = 3;
 	
 	let ebo = gl.createBuffer();
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
-	gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, ebo_data, gl.STATIC_DRAW);
+	gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data_indices, gl.STATIC_DRAW);
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
 	
 	// Create and initialize a vertex array object (VAO) [it is a "container" of vertex buffer objects (VBO)]
@@ -295,6 +450,7 @@ function init_wgl()
 	// Create and initialize a shader program // [=> Sylvain's API - wrapper of GL code]
 	shaderProgramTerrain = ShaderProgram(vertexShaderTerrain, fragmentShaderTerrain, 'terrain shader');
 	shaderProgramWater = ShaderProgram(vertexShaderWater, fragmentShaderWater, 'water shader');
+    shaderProgramSky = ShaderProgram(vertexShaderSky, fragmentShaderSky, 'skybox shader');
 
 	// Build mesh
 	buildTerrain();
@@ -302,9 +458,9 @@ function init_wgl()
 	
 	// TEXTURE
 	texture = gl.createTexture();
-	const image = new Image();
-    image.src = 'textures/heightmap.png';
-    image.onload = () => {
+	const terrain_image = new Image();
+    terrain_image.src = 'textures/heightmap2.png';
+    terrain_image.onload = () => {
 	    
 		// Bind texture as the "current" one
 		// - each followinf GL call will affect its internal state
@@ -313,7 +469,7 @@ function init_wgl()
 		// Configure data type (storage on GPU) and upload image data to GPU
 		// - RGBA: 4 comonents
 		// - UNSIGNED_BYTE: each component is an "unsigned char" (i.e. value in [0;255]) => NOTE: on GPU data is automatically accessed with float type in [0;1] by default
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, terrain_image);
 		
 		// Configure "filtering" mode
 		// => what to do when, projected on screen, a texel of an image is smaller than a screen pixel or when a texel covers several screen pixel
@@ -336,7 +492,15 @@ function init_wgl()
 		// Clean GL state
         gl.bindTexture(gl.TEXTURE_2D, null);
     };
-	
+
+    //SKYBOX
+    skybox = TextureCubeMap();
+    skybox.load(["textures/skybox/skybox2/right.png", "textures/skybox/skybox2/left.png",
+                "textures/skybox/skybox2/top.png", "textures/skybox/skybox2/bottom.png",
+                "textures/skybox/skybox2/back.png", "textures/skybox/skybox2/front.png"])
+	let cube = Mesh.Cube()
+    cube_rend = cube.renderer(0, -1, -1)
+
 	// Set default GL states
 	// - color to use when refreshing screen
 	gl.clearColor(0, 0, 0 ,1); // black opaque [values are between 0.0 and 1.0]
@@ -348,21 +512,30 @@ function init_wgl()
 // Render scene
 //--------------------------------------------------------------------------------------------------------
 function draw_wgl()
-{	// --------------------------------
-	// [1] - always do that
-	// --------------------------------
-	
-	// Clear the GL "color" and "depth" framebuffers (with OR)
+{
+
+
 	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-	// --------------------------------
-	// [2] - render your scene
-	// --------------------------------
+
+    /////////////////////////////////////////////
+    shaderProgramSky.bind();
+    /////////////////////////////////////////////
+
+    Uniforms.uvpmat = ewgl.scene_camera.get_matrix_for_skybox()
+    Uniforms.tu = skybox.bind() 
+    
+    cube_rend.draw(gl.TRIANGLES)
+
+    
+
+    /////////////////////////////////////////////
+	shaderProgramWater.bind();
+    /////////////////////////////////////////////
+
 	var pMat = ewgl.scene_camera.get_projection_matrix();
 	var vMat = ewgl.scene_camera.get_view_matrix();
-
-
-	shaderProgramWater.bind();
+    var mMat = Matrix.scale(1.0);
 
 	Uniforms.uProjectionMatrix = pMat;
 	Uniforms.uViewMatrix = vMat;
@@ -371,35 +544,30 @@ function draw_wgl()
 	gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
 
     
-	// Set "current" shader program
-	shaderProgramTerrain.bind(); // [=> Sylvain's API - wrapper of GL code]
+    /////////////////////////////////////////////
+	shaderProgramTerrain.bind();
+    /////////////////////////////////////////////
 
-	// Set uniforms // [=> Sylvain's API - wrapper of GL code]
+    
 	Uniforms.uMeshColor = [230/255, 66/255, 16/255];
-	// - transformation matrix
 	Uniforms.uProjectionMatrix = pMat;
 	Uniforms.uViewMatrix = vMat;
+    let nvm = Matrix.mult(vMat, mMat);
+    Uniforms.uNormalMatrix = nvm.inverse3transpose();
+    Uniforms.uLightIntensity = [128.0, 128.0, 128.0];
+    Uniforms.uLightPosition = [1.0,1.0,1.0];
 	
-	// Activate texture
-	// - set GL state
+
   	gl.activeTexture(gl.TEXTURE0);
 	gl.bindTexture(gl.TEXTURE_2D, texture);
-	// - set uniform
+
 	Uniforms.uSampler = 0;
 
-	// Bind "current" vertex array (VAO)
 	gl.bindVertexArray(vaoTerrain);
-	
-	// Draw commands
 	gl.drawElements(gl.TRIANGLES, nbMeshIndices, gl.UNSIGNED_INT, 0);
-
-	Uniforms.uMeshColor = [1.0, 1.0, 1.0];
     
 	
-	// Reset GL state(s)
-	// - unbind vertex array
 	gl.bindVertexArray(null);
-	// - unbind shader program
 	gl.useProgram(null);
 }
 
