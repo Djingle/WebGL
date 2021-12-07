@@ -7,18 +7,30 @@
 var vertexShaderTerrain =
 `#version 300 es
 
-// INPUT
-layout(location=1) in vec2 position_in;
+vec3 calculateNormal(vec3 position, sampler2D heightmap, float height, float width)
+{
+    vec3 off = vec3(1.0/(width-1.0), 1.0/(height-1.0), 0.0);
+    float hL = texture(heightmap, position.xz - off.xz).r;
+    float hR = texture(heightmap, position.xz + off.xz).r;
+    float hD = texture(heightmap, position.xz - off.zy).r;
+    float hU = texture(heightmap, position.xz + off.zy).r;
 
-vec3 calculateNormal(vec2 texcoord, )
+    return normalize(vec3(hL-hR, 2.0, hD-hU));
+}
+
 
 // UNIFORM
 uniform mat4 uProjectionMatrix;
 uniform mat4 uViewMatrix;
 uniform mat3 uNormalMatrix;
+uniform float uHeight;
+uniform float uWidth;
 
 // - texture
 uniform sampler2D uSampler;
+
+// INPUT
+layout(location=1) in vec2 position_in;
 
 // OUTPUT
 out vec2 v_textureCoord;
@@ -28,20 +40,19 @@ out vec3 v_nor;
 // MAIN PROGRAM
 void main()
 {	
-	vec2 uv = position_in;
-	v_textureCoord = uv;
+    v_textureCoord = position_in;
 
 	vec3 position = vec3(2.0*position_in.x-1.0, 0.0, 2.0*position_in.y-1.0);
-	
-	float terrainHeight = texture(uSampler, uv).r;
+	float terrainHeight = texture(uSampler, position_in).r;
 	position.y += terrainHeight;
 
+	vec3 normal = calculateNormal(position, uSampler, uHeight, uWidth);
+
     v_pos = (uViewMatrix * vec4(position, 1.0)).xyz;
-    v_nor = normalize(uNormalMatrix * normal_in);
+    v_nor = normalize(uNormalMatrix * normal);
 	
 
 
-	// - write position
 	gl_Position = uProjectionMatrix * uViewMatrix * vec4(position, 1.0);
 }
 `;
@@ -77,7 +88,8 @@ void main()
     vec3 n = normalize(v_nor);
 
     vec3 Ka = uMeshColor.rgb;
-    vec3 Kd = uMeshColor.rgb;
+    Ka = vec3(0.0, 0.0, 0.0)/255.0;
+    vec3 Kd = vec3(252.0, 186.0, 3.0)/255.0;
 
     vec3 Ia = uLightIntensity * Ka;
 
@@ -90,12 +102,9 @@ void main()
 
 	vec4 textureColor = texture(uSampler, v_textureCoord);
 
-    oFragmentColor =  vec4((0.5 * Ia) * (0.5 * Id), 1.0);
-
-
-	// MANDATORY
-	// - a fragment shader MUST write an RGBA color
-	//oFragmentColor = vec4(uMeshColor * textureColor.rgb, 1.0); // [values are between 0.0 and 1.0]
+    oFragmentColor =  vec4((0.5 * Ia) + (0.5 * Id), 1.0);
+    // oFragmentColor = vec4(Id, 1.0);
+    // oFragmentColor =  vec4((0.5 * Ia) * (0.5 * Id), 1.0);
 }
 `;
 
@@ -283,7 +292,7 @@ function buildTerrain()
 			// x
 			data_positions[2 * (i + j * iMax)] = i / (iMax - 1);
             // z
-            data_positions[2 * (i + j * iMax) + 2] = j / (jMax - 1);
+            data_positions[2 * (i + j * iMax) + 1] = j / (jMax - 1);
 	    }
 	}
 
@@ -553,7 +562,7 @@ function draw_wgl()
 	Uniforms.uViewMatrix = vMat;
     let nvm = Matrix.mult(vMat, mMat);
     Uniforms.uNormalMatrix = nvm.inverse3transpose();
-    Uniforms.uLightIntensity = [128.0, 128.0, 128.0];
+    Uniforms.uLightIntensity = 50.0;
     Uniforms.uLightPosition = [1.0,1.0,1.0];
 	Uniforms.uHeight = jMax;
 	Uniforms.uWidth = iMax;
