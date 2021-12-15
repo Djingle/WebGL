@@ -103,11 +103,49 @@ void main()
 	vec4 textureColor = texture(uSampler, v_textureCoord);
 
     oFragmentColor =  vec4((0.5 * Ia) + (0.5 * Id), 1.0);
-    // oFragmentColor = vec4(Id, 1.0);
-    // oFragmentColor =  vec4((0.5 * Ia) * (0.5 * Id), 1.0);
 }
 `;
 
+//--------------------------------------------------------------------------------------------------------
+// REFLECTION AND REFRACTION
+//--------------------------------------------------------------------------------------------------------
+
+
+
+var vertexShaderRef = 
+`#version 300 es
+precision highp float;
+
+// OUTPUT
+out vec2 texCoord;
+
+void main()
+{
+	float x = -1.0 + float((gl_VertexID & 1) << 2);
+	float y = -1.0 + float((gl_VertexID & 2) << 1);
+
+	texCoord.x = x * 0.5 + 0.5;
+	texCoord.y = y * 0.5 + 0.5;
+
+	gl_Position = vec4(x, y, 0.0, 1.0);
+}
+`;
+
+var fragmentShaderRef = 
+`#version 300 es
+precision highp float;
+
+// INPUT
+in vec2 texCoord;
+
+// OUTPUT
+out vec4 oColor;
+
+void main()
+{
+	oColor = vec4(1.0, 0.0, 0.0, 1.0);
+}
+`;
 
 //--------------------------------------------------------------------------------------------------------
 // WATER
@@ -120,6 +158,7 @@ precision highp float;
 layout(location = 0) in vec2 position_in;
 
 // OUTPUT
+out vec2 texCoord;
 
 // UNIFORM
 uniform mat4 uProjectionMatrix;
@@ -128,6 +167,7 @@ uniform mat4 uViewMatrix;
 
 void main()
 {
+	texCoord = position_in;
 	vec3 position = vec3(position_in.x, 0.45, position_in.y);
 	gl_Position = uProjectionMatrix * uViewMatrix * vec4(position, 1.0);
 }
@@ -137,15 +177,24 @@ var fragmentShaderWater =
 `#version 300 es
 precision highp float;
 
+// INPUT
+in vec2 texCoord;
 
-
+// OUTPUT
 out vec4 oFragmentColor;
+
+// UNIFORM
+uniform sampler2D uSamplerReflection;
+uniform sampler2D uSamplerRefraction;
 
 void main()
 {
-	oFragmentColor = vec4(66, 16, 230, 1.0);
+	vec3 reflection = texture(uSamplerReflection, texCoord).rgb;
+	vec3 refraction = texture(uSamplerRefraction, texCoord).rgb;
+	oFragmentColor = vec4(0.5*reflection + 0.5*refraction, 1.0);
 }
 `;
+
 
 
 
@@ -190,6 +239,7 @@ void main()
 var shaderProgramTerrain = null;
 var shaderProgramWater = null;
 var shaderProgramSky = null;
+var shaderProgramRef = null;
 
 var vaoTerrain = null;
 var vaoWater = null;
@@ -200,81 +250,21 @@ var cube_rend;
 var skybox = null;
 
 
+// FBO for ref.
+var fbo = null;
+var texReflection = null;
+var texRefraction = null;
+var fboTexWidth = 1024;
+var fboTexHeight = 1024;
+
+
 // Terrain
 var jMax = 100;
 var iMax = 100;
 var nbMeshIndices = 0;
 
 
-//--------------------------------------------------------------------------------------------------------
-// Calculate normals
-//--------------------------------------------------------------------------------------------------------
-function calculateNormals(vs, ind)
-{
-    const
-      x = 0,
-      y = 1,
-      z = 2,
-      ns = [];
 
-    // For each vertex, initialize normal x, normal y, normal z
-    for (let i = 0; i < vs.length; i += 3) {
-      ns[i + x] = 0.0;
-      ns[i + y] = 0.0;
-      ns[i + z] = 0.0;
-    }
-
-    // We work on triads of vertices to calculate
-    for (let i = 0; i < ind.length; i += 3) {
-      // Normals so i = i+3 (i = indices index)
-      const v1 = [], v2 = [], normal = [];
-
-      // p2 - p1
-      v1[x] = vs[3 * ind[i + 2] + x] - vs[3 * ind[i + 1] + x];
-      v1[y] = vs[3 * ind[i + 2] + y] - vs[3 * ind[i + 1] + y];
-      v1[z] = vs[3 * ind[i + 2] + z] - vs[3 * ind[i + 1] + z];
-
-      // p0 - p1
-      v2[x] = vs[3 * ind[i] + x] - vs[3 * ind[i + 1] + x];
-      v2[y] = vs[3 * ind[i] + y] - vs[3 * ind[i + 1] + y];
-      v2[z] = vs[3 * ind[i] + z] - vs[3 * ind[i + 1] + z];
-
-      // Cross product by Sarrus Rule
-      normal[x] = v1[y] * v2[z] - v1[z] * v2[y];
-      normal[y] = v1[z] * v2[x] - v1[x] * v2[z];
-      normal[z] = v1[x] * v2[y] - v1[y] * v2[x];
-
-      // Update the normals of that triangle: sum of vectors
-      for (let j = 0; j < 3; j++) {
-        ns[3 * ind[i + j] + x] = ns[3 * ind[i + j] + x] + normal[x];
-        ns[3 * ind[i + j] + y] = ns[3 * ind[i + j] + y] + normal[y];
-        ns[3 * ind[i + j] + z] = ns[3 * ind[i + j] + z] + normal[z];
-      }
-    }
-
-    // Normalize the result.
-    // The increment here is because each vertex occurs.
-    for (let i = 0; i < vs.length; i += 3) {
-      // With an offset of 3 in the array (due to x, y, z contiguous values)
-      const nn = [];
-      nn[x] = ns[i + x];
-      nn[y] = ns[i + y];
-      nn[z] = ns[i + z];
-
-      let len = Math.sqrt((nn[x] * nn[x]) + (nn[y] * nn[y]) + (nn[z] * nn[z]));
-      if (len === 0) len = 1.0;
-
-      nn[x] = nn[x] / len;
-      nn[y] = nn[y] / len;
-      nn[z] = nn[z] / len;
-
-      ns[i + x] = nn[x];
-      ns[i + y] = nn[y];
-      ns[i + z] = nn[z];
-    }
-
-    return ns;
-  }
 
 //--------------------------------------------------------------------------------------------------------
 // Build mesh
@@ -317,63 +307,34 @@ function buildTerrain()
 	    }
 	}
 
-    let data_normals = new Float32Array(nbMeshIndices);
-    let data_normals1 = calculateNormals(data_positions, data_indices);
-    data_normals = calculateNormals(data_positions, data_indices);
-    console.log(data_normals.length + ',' + data_normals1.length)
-    console.log(data_normals[0] + ',' + data_normals[1] + ',' + data_normals[2])
-
     
-	// - create a VBO (kind of memory pointer or handle on GPU)
 	let vbo_positions_t = gl.createBuffer();
-	// - bind "current" VBO
 	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions_t); 
-	// - allocate memory on GPU (size of data) and send data from CPU to GPU
 	gl.bufferData(gl.ARRAY_BUFFER, data_positions, gl.STATIC_DRAW);
-	// - reset GL state
 	gl.bindBuffer(gl.ARRAY_BUFFER, null);
+	
 
-    let vbo_normals = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, vbo_normals);
-    gl.bufferData(gl.ARRAY_BUFFER, data_normals, gl.STATIC_DRAW);
-    gl.bindBuffer(gl.ARRAY_BUFFER, null);
-	
-	// Create ande initialize an element buffer object (EBO) [it is a buffer of generic user data: positions, normals, texture coordinates, temperature, etc...]
-	// - create data on CPU
-	// - this is the geometry of your object)
-	// - we store 2D position "indices" as 1D array of "triangle" indices : (i0,j0,k0, i1,j1,k1, i2,j2,k2, ...)
-	
 	let ebo = gl.createBuffer();
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
 	gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data_indices, gl.STATIC_DRAW);
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
 	
-
     vaoTerrain = gl.createVertexArray();
 	gl.bindVertexArray(vaoTerrain);
+
 	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions_t);
-	let vertexAttributeID = 1; // specifies the "index" of the generic vertex attribute to be modified
-	let dataSize = 2; // 2 for 2D positions. Specifies the number of components per generic vertex attribute. Must be 1, 2, 3, 4.
-	let dataType = gl.FLOAT; // data type
-	gl.vertexAttribPointer(vertexAttributeID, dataSize, dataType, false, 0, 0); // unused parameters for the moment (normalized, stride, pointer)
+	let vertexAttributeID = 1;
+	let dataSize = 2;
+	let dataType = gl.FLOAT;
+	gl.vertexAttribPointer(vertexAttributeID, dataSize, dataType, false, 0, 0);
     gl.enableVertexAttribArray(vertexAttributeID);
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, vbo_normals);
-    vertexAttributeID = 2;
-    dataSize = 3;
-    dataType = gl.FLOAT;
-    gl.vertexAttribPointer(vertexAttributeID, dataSize, dataType, false, 0, 0);
-	gl.enableVertexAttribArray(vertexAttributeID);
-
-	// - bind "current" EBO
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
 	
-	// Reset GL states
 	gl.bindVertexArray(null);
-	gl.bindBuffer(gl.ARRAY_BUFFER, null); // BEWARE: only unbind the VBO after unbinding the VAO !
-	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null); // BEWARE: only unbind the EBO after unbinding the VAO !
+	gl.bindBuffer(gl.ARRAY_BUFFER, null);
+	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
 
-	// HACK...
 	update_wgl();
 }
 
@@ -381,11 +342,6 @@ function buildWater()
 {
 	gl.deleteVertexArray(vaoWater);
 
-	// Create ande initialize a vertex buffer object (VBO) [it is a buffer of generic user data: positions, normals, texture coordinates, temperature, etc...]
-	// - create data on CPU
-	// - this is the geometry of your object)
-	// - we store 2D positions as 1D array : (x0,y0,x1,y1,x2,y2,x3,y3)
-	// - for a terrain: a grid of 2D points in [0.0;1.0]
 	let data_positions = new Float32Array(8);
 	data_positions[0] = -1;
 	data_positions[1] = -1;
@@ -396,19 +352,11 @@ function buildWater()
 	data_positions[6] = -1;
 	data_positions[7] = 1;
 	
-	// - create a VBO (kind of memory pointer or handle on GPU)
 	let vbo_positions_w = gl.createBuffer();
-	// - bind "current" VBO
 	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions_w); 
-	// - allocate memory on GPU (size of data) and send data from CPU to GPU
 	gl.bufferData(gl.ARRAY_BUFFER, data_positions, gl.STATIC_DRAW);
-	// - reset GL state
 	gl.bindBuffer(gl.ARRAY_BUFFER, null);
 	
-	// Create ande initialize an element buffer object (EBO) [it is a buffer of generic user data: positions, normals, texture coordinates, temperature, etc...]
-	// - create data on CPU
-	// - this is the geometry of your object)
-	// - we store 2D position "indices" as 1D array of "triangle" indices : (i0,j0,k0, i1,j1,k1, i2,j2,k2, ...)
 	let data_indices = new Uint32Array(6)
 	data_indices[0] = 0;
 	data_indices[1] = 1;
@@ -422,28 +370,20 @@ function buildWater()
 	gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data_indices, gl.STATIC_DRAW);
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
 	
-	// Create and initialize a vertex array object (VAO) [it is a "container" of vertex buffer objects (VBO)]
 	vaoWater = gl.createVertexArray();
-	// - bind "current" VAO
 	gl.bindVertexArray(vaoWater);
-	// - bind "current" VBO
 	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions_w);
-	// - attach VBO to VAO
-	let vertexAttributeID = 0; // specifies the "index" of the generic vertex attribute to be modified
-	let dataSize = 2; // 2 for 2D positions. Specifies the number of components per generic vertex attribute. Must be 1, 2, 3, 4.
-	let dataType = gl.FLOAT; // data type
-	gl.vertexAttribPointer(vertexAttributeID, dataSize, dataType, false, 0, 0); // unused parameters for the moment (normalized, stride, pointer)
-	// - enable the use of VBO. It enable or disable a generic vertex attribute array
+	let vertexAttributeID = 0;
+	let dataSize = 2;
+	let dataType = gl.FLOAT;
+	gl.vertexAttribPointer(vertexAttributeID, dataSize, dataType, false, 0, 0);
 	gl.enableVertexAttribArray(vertexAttributeID);
-	// - bind "current" EBO
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
 	
-	// Reset GL states
 	gl.bindVertexArray(null);
-	gl.bindBuffer(gl.ARRAY_BUFFER, null); // BEWARE: only unbind the VBO after unbinding the VAO !
-	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null); // BEWARE: only unbind the EBO after unbinding the VAO !
+	gl.bindBuffer(gl.ARRAY_BUFFER, null);
+	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
 
-	// HACK...
 	update_wgl();
 }
 
@@ -459,6 +399,7 @@ function init_wgl()
 	shaderProgramTerrain = ShaderProgram(vertexShaderTerrain, fragmentShaderTerrain, 'terrain shader');
 	shaderProgramWater = ShaderProgram(vertexShaderWater, fragmentShaderWater, 'water shader');
     shaderProgramSky = ShaderProgram(vertexShaderSky, fragmentShaderSky, 'skybox shader');
+	shaderProgramRef = ShaderProgram(vertexShaderRef, fragmentShaderRef, 'ref shader');
 
 	// Build mesh
 	buildTerrain();
@@ -509,6 +450,36 @@ function init_wgl()
 	let cube = Mesh.Cube()
     cube_rend = cube.renderer(0, -1, -1)
 
+
+	// REFLEXION AND REFRACTION
+	//   Textures
+
+	texReflection = gl.createTexture();
+	texRefraction = gl.createTexture();
+
+	gl.bindTexture(gl.TEXTURE_2D, texReflection);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, fboTexWidth, fboTexHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+
+	gl.bindTexture(gl.TEXTURE_2D, texRefraction);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, fboTexWidth, fboTexHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+
+	gl.bindTexture(gl.TEXTURE_2D, null);
+
+
+	fbo = gl.createFramebuffer();
+	gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+
+	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texReflection, 0);
+	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, texRefraction, 0);
+
+	gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+
+	gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
 	// Set default GL states
 	// - color to use when refreshing screen
 	gl.clearColor(0, 0, 0 ,1); // black opaque [values are between 0.0 and 1.0]
@@ -521,8 +492,18 @@ function init_wgl()
 //--------------------------------------------------------------------------------------------------------
 function draw_wgl()
 {
+	gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+	gl.viewport(0, 0, fboTexWidth, fboTexHeight);
+	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
+	/////////////////////////////////////////////
+	shaderProgramRef.bind(); // FBO /////////////
+	/////////////////////////////////////////////
 
+	gl.drawArrays(gl.TRIANGLES, 0, 2);
+
+	gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+	gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
 
@@ -547,6 +528,14 @@ function draw_wgl()
 
 	Uniforms.uProjectionMatrix = pMat;
 	Uniforms.uViewMatrix = vMat;
+
+	gl.activeTexture(gl.TEXTURE0);
+	gl.bindTexture(gl.TEXTURE_2D, texReflection);
+	Uniforms.uSamplerReflection = 0;
+	
+	gl.activeTexture(gl.TEXTURE1);
+	gl.bindTexture(gl.TEXTURE_2D, texRefraction);
+	Uniforms.uSamplerRefraction = 1;
 
 	gl.bindVertexArray(vaoWater);
 	gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
