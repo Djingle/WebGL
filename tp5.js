@@ -2,165 +2,192 @@
 "use strict"
 
 //--------------------------------------------------------------------------------------------------------
-// VERTEX SHADER (GLSL language)
+// SKY SHADER (GLSL language)
 //--------------------------------------------------------------------------------------------------------
-var vertexShaderCar =
+var sky_vert =
 `#version 300 es
 
-// INPUT
-layout(location=1) in vec3 position_in;
-layout(location=2) in vec3 normal_in;
+layout(location = 0) in vec3 position_in;
+out vec3 tex_coord;
+uniform mat4 projectionviewMatrix;
 
-// UNIFORM
-// - Camera matrices
-uniform mat4 uProjectionMatrix;
-uniform mat4 uViewMatrix;
-// - Model matrix
-uniform mat4 uModelMatrix;
-// - Normal matrix: used to transform "vectors"
-uniform mat3 uNormalMatrix;
-
-// OUTPUT
-// - these "per-vertex" values will be sent through the graphics pipeline to be interpolated by the hardware rasterizer and retrieved in the fragment shader
-out vec3 v_position;
-out vec3 v_normal;
-
-// MAIN PROGRAM
 void main()
 {
-	// --------------------------------------
-	// Lighting and shading: PER-FRAGMENT
-	// - here, we "send" mandatory information to the fragment shader (i.e. "position" and "normal")
-	// --------------------------------------
-	v_position = (uViewMatrix * uModelMatrix * vec4(position_in, 1.0)).xyz; // in View space
-	v_normal = normalize(uNormalMatrix * normal_in); // in View space
-	
-	gl_Position = uProjectionMatrix * uViewMatrix * uModelMatrix * vec4(position_in, 1.0); // NOTE: this could be optimized with "gl_Position = uProjectionMatrix * p;"
+	tex_coord = position_in;
+	gl_Position = projectionviewMatrix * vec4(position_in, 1.0);
+}  
+`;
+
+//--------------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------------
+var sky_frag =
+`#version 300 es
+
+precision highp float;
+in vec3 tex_coord;
+out vec4 frag;
+uniform samplerCube TU;
+
+void main()
+{	
+	frag = texture(TU, tex_coord);
 }
 `;
 
 //--------------------------------------------------------------------------------------------------------
-// FRAGMENT SHADER (GLSL language)
+// LIGHTNING + REFLECTION SHADER (GLSL language)
 //--------------------------------------------------------------------------------------------------------
-var fragmentShaderCar =
+var vertexShader =
+`#version 300 es
+
+layout(location = 1) in vec3 position_in;
+layout(location = 2) in vec3 normal_in;
+
+uniform mat4 uProjectionMatrix;
+uniform mat4 uViewMatrix;
+uniform mat4 uModelMatrix;
+// uniform mat3 uNormalMatrix;
+uniform mat3 uNormalModel;
+uniform mat3 uNormalView;
+
+// in view space
+out vec3 v_position;
+out vec3 v_normal;
+// in world space
+out vec3 w_position;
+out vec3 w_normal;
+
+void main()
+{
+	v_position = (uViewMatrix * uModelMatrix * vec4(position_in, 1.0)).xyz; // in View space
+	v_normal = uNormalView * uNormalModel * normal_in; // in View space
+
+	w_position = (uModelMatrix * vec4(position_in, 1.0)).xyz; // in world space
+	w_normal = uNormalModel * normal_in; // in world space
+	
+	
+	gl_Position = uProjectionMatrix * uViewMatrix * uModelMatrix * vec4(position_in, 1.0);
+}
+`;
+
+//--------------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------------
+var fragmentShader =
 `#version 300 es
 precision highp float;
 
 #define M_PI 3.14159265358979
 
-// INPUT
-// Per-fragment "interpolated" directions of "normal", "light" and "viewer" directions (between each vertices of triangle primitives)
-// - these previous "per-vertex" values have been sent through the graphics pipeline to be interpolated by the hardware rasterizer and retrieved in the fragment shader
+// in view space
 in vec3 v_position;
 in vec3 v_normal;
+// in world space
+in vec3 w_position;
+in vec3 w_normal;
 
-// UNIFORM
-// Material (BRDF: bidirectional reflectance distribution function)
 uniform vec3 uKa; // ambiant
 uniform vec3 uKd; // diffuse
 uniform vec3 uKs; // specular
 uniform float uNs; // specular
-uniform float uT;   // transparency
-// Light (Point light)
-uniform float uLightIntensity;
-uniform vec3 uLightPosition;
+// Light
+uniform vec3 uLightDirection; // light direction
+uniform vec3 uLightIntensity; // i.e light color
+// Camera
+uniform vec4 uCameraPosW;
 
-// OUTPUT
+
+uniform samplerCube TU;
+uniform float k;
+
+uniform bool uT; // Transparency
+
 out vec4 oFragmentColor;
 
-// MAIN PROGRAM
-void main()
+vec3 lightning()
 {
-	// --------------------------------------
-	// Lighting and shading: PER-FRAGMENT
-	// - here, we "retrieve" mandatory information from the vertex shader (i.e. "position" and "normal")
-	// --------------------------------------
 	vec3 p = v_position;
 	vec3 n = normalize(v_normal); // interpolated normal direction from current interpolated position in View space
 	
-	// We use the additive ADS model (ambiant, diffuse, specular) with Blinn Phong equation
+	// Ambient
+	vec3 Ia = uLightIntensity * uKa;
 
-	// 1) Reflected ambiant intensity
-	vec3 Ia = uLightIntensity * uKa; // or just vec3 Ia = uKa;
+	// Diffus (Lambert BRDF)
 
-	// 2) Reflected diffuse intensity
+	// For a point light : 
 	// vec3 ligthPosition = vec3(0.0, 0.0, 0.0); // here, we use a "hard-coded" light position located on the eye
-	vec3 lightDir = uLightPosition - p; // "light direction" from current interpolated position in View space
-	float d2 = dot(lightDir, lightDir);	// square distance from the light to the fragment
-	lightDir /= sqrt(d2); // normalization of light dir -- or : lightDir = normalize(lightDir);
+	// vec3 lightDir = ligthPosition - p; // "light direction" from current interpolated position in View space
+	// float d2 = dot(lightDir, lightDir);	// square distance from the light to the fragment
+	// lightDir /= sqrt(d2); // normalization of light dir -- or : lightDir = normalize(lightDir);
+	// float diffuseTerm = max(0.0, dot(n, lightDir)); // "max" is used to avoir "back" lighting (when light is behind the object)
+	// vec3 Id = (uLightIntensity / d2) * uKd * vec3(diffuseTerm);
+	
+	// For a directional light
+	vec3 lightDir = normalize(uLightDirection); // "light direction" : the same for every point = directional light (infinite light, like sun)
 	float diffuseTerm = max(0.0, dot(n, lightDir)); // "max" is used to avoir "back" lighting (when light is behind the object)
-	vec3 Id = (uLightIntensity / d2) * uKd * vec3(diffuseTerm);
+	vec3 Id = uLightIntensity * uKd * vec3(diffuseTerm);
+
 	Id = Id / M_PI; // normalization of the diffuse BRDF (for energy conservation)
 	
-	// 3) Reflected specular intensity
+	// Specular
 	vec3 Is = vec3(0.0);
 	if (diffuseTerm > 0.0)
 	{
 		vec3 viewDir = normalize(-p.xyz); // "view direction" from current vertex position => because, in View space, "dir = vec3(0.0, 0.0, 0.0) - p"
 		vec3 halfDir = normalize(viewDir + lightDir); // half-vector between view and light vectors
-		float specularTerm = max(0.0, pow(dot(n, halfDir), uNs)); // "Ns" control the size of the specular highlight (the rugosity)
+		float specularTerm = max(0.0, pow(dot(n, halfDir), uNs)); // "Ns" control the size of the specular highlight
 		Is = uLightIntensity * uKs * vec3(specularTerm);
 		Is /= (uNs + 2.0) / (2.0 * M_PI); // normalization of the specular BRDF (for energy conservation)
 	}
+
 	// Reflected intensity (i.e final color)
-	vec3 color = (0.3 * Ia) + (0.3 * Id) + (0.3 * Is);
-	// --------------------------------------
-	
-    float t = 1.;
-    if (uT == 1.)
-    {
-        t = 0.3;
-    }
-	oFragmentColor = vec4(color, t); // [values are between 0.0 and 1.0]
+	return (0.3 * Ia) + (0.3 * Id) + (0.3 * Is);
 }
-`;
 
-var vertexShaderCube =
-`#version 300 es
-layout(location=0) in vec3 position_in;
-uniform mat4 uvpmat;
-out vec3 v_position;
+vec3 reflection()
+{
+	vec3 N = normalize(w_normal);						// normal
+	vec3 D = normalize(w_position - vec3(uCameraPosW));	// direction from eye to frag position
+	vec3 R = reflect(D, N);								// Compute the position of the reflected environment part from the direction and the normal
+	return texture(TU, R).rgb;							// Get the sample in the cubemap texture at this position
+}
 
 void main()
 {
-    v_position = position_in;
-    gl_Position = uvpmat * vec4(position_in, 1);
+	// Compute BlinnPhong lightning
+	vec3 color = lightning();
+
+	// Add reflection of the environment
+	vec3 ref = reflection();
+
+	// Mix the lightning color and the reflection color and module alpha canal to the parts of the model that are transparent
+	if (uT)	// if transparency tag
+	{
+		color -= 0.3;	// To darken the glasses
+		oFragmentColor = vec4(mix(color, ref, k), 0.8);
+	}
+	else oFragmentColor = vec4(mix(color, ref, k), 1);
 }
 `;
-
-var fragmentShaderCube = 
-`#version 300 es
-precision highp float;
-uniform samplerCube tu;
-in vec3 v_position;
-out vec4 oFragmentColor;
-
-void main()
-{
-    oFragmentColor = texture(tu, v_position);
-}
-`;
-
 
 //--------------------------------------------------------------------------------------------------------
 // GLOBAL VARIABLES
 //--------------------------------------------------------------------------------------------------------
 
-// Shader program
-var shaderProgramCar = null;
-var shaderProgramCube = null;
+// Shader program for the car
+var prg_car = null;
+
+// For the environnement
+var prg_envMap = null;
+var tex_envMap = null;
+var sky_rend = null;
+var sl_refl = null;
+
 
 // GUI (graphical user interface)
 // - light color
-// var slider_r;
-// var slider_g;
-// var slider_b;
-// - light position
-var slider_x;
-var slider_y;
-var slider_z;
-// - light intensity
-var slider_light_intensity;
+var slider_r;
+var slider_g;
+var slider_b;
 // - rendering
 var checkbox_wireframe;
 
@@ -175,10 +202,6 @@ var asset_material_kd_list = [];
 var asset_material_ks_list = [];
 var asset_material_ns_list = [];
 var asset_material_T_list = [];
-
-// Textures
-var tex_envMap = null;
-var cube_rend;
 
 //--------------------------------------------------------------------------
 // Utility function
@@ -265,122 +288,49 @@ function SceneManager_calculateNormals(vs, ind)
 //--------------------------------------------------------------------------
 function SceneManager_add(object)
 {
-	// -------------------------------------------------------------------
-	// Part 1: allocate buffers on GPU and send/fill data from CPU
-	// -------------------------------------------------------------------
-	
 	// [1] - VBO: position buffer
-	//
-	// Create and initialize a vertex buffer object (VBO) [it is a buffer of generic user data: positions, normals, texture coordinates, temperature, etc...]
-	// - create data on CPU
-	// - we store 3D positions as 1D array : (x0,y0,z0, x1,y1,z1, x2,y2,z2, ...)
 	let data_positions = new Float32Array(object.vertices);
-	// - create a VBO (kind of memory pointer or handle on GPU)
 	let vbo_positions = gl.createBuffer();
-	// - bind "current" VBO (so that each next GL method will be associated to bound element)
 	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions); // HELP: could be seen as a GPU pointer (or handle), ex: "void* vbo_positions"
-	// - allocate memory on GPU (size of data) and send data from CPU to GPU
 	gl.bufferData(gl.ARRAY_BUFFER, data_positions, gl.STATIC_DRAW); // HELP: could be seen as an allocation on GPU "void* vbo_positions = new float[data_positions.length]"
-	// - reset GL state
 	gl.bindBuffer(gl.ARRAY_BUFFER, null);
 	
 	// [2] - VBO: normal buffer
-	//
-	// Create and initialize a vertex buffer object (VBO) [it is a buffer of generic user data: positions, normals, texture coordinates, temperature, etc...]
-	// - create data on CPU
-	// - we store 3D normales as 1D array : (nx0,ny0,nz0, nx1,ny1,nz1, nx2,ny2,nz2, ...)
-	// IMPORTANT : there are no "normals" stored in the JSON files used in this TP, so we need to compute them with the provided utility function SceneManager_calculateNormals()
 	let data_normals = new Float32Array(SceneManager_calculateNormals(object.vertices, object.indices));
-	// - create a VBO (kind of memory pointer or handle on GPU)
 	let vbo_normals = gl.createBuffer();
-	// - bind "current" VBO
 	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_normals); // HELP: could be seen as a GPU pointer (or handle), ex: "void* vbo_normals"
-	// - allocate memory on GPU (size of data) and send data from CPU to GPU
 	gl.bufferData(gl.ARRAY_BUFFER, data_normals, gl.STATIC_DRAW); // HELP: could be seen as an allocation on GPU "void* vbo_normals = new float[data_normals.length]"
-	// - reset GL state
 	gl.bindBuffer(gl.ARRAY_BUFFER, null);
 	
 	// [3] - EBO: index buffer (for "indexed rendering" with glDrawElements())
-	//
-	// Create and initialize an element buffer object (EBO) [it is a buffer used to store index of vertices for each primitive faces (ex: triangles)]
-	// - create data on CPU
-	// - we store "indices" of vertices as 1D array of "triangle" vertex indices : (i0,j0,k0, i1,j1,k1, i2,j2,k2, ...)
 	let ebo_data = new Uint32Array(object.indices);
-	// Index buffer
 	let ebo = gl.createBuffer();
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo); // HELP: could be seen as a GPU pointer (or handle), ex: "void* ebo"
-	// - allocate memory on GPU (size of data) and send data from CPU to GPU
 	gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, ebo_data, gl.STATIC_DRAW); // HELP: could be seen as an allocation on GPU "void* ebo = new uint[ebo_data.length]"
-	// - reset GL state
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
 	
 	// -------------------------------------------------------------------
 	// Part 2: Initialize a VAO (vertex array) to hold all previous buffers "information"
-	//
-	// a VAO is the main GL object used during rendering stage.
-	// We MUST set:
-	// - the list of associated/referenced buffers (VBOs, EBO)
-	// - the buffer ID (index) for each VBO (a VAO can store a list of VBO ID)
-	// - how to interpret each buffer in memory: which format? (float, uint...), which size? (1,2,3,4: how are grouped components [i.e vec3, vec4...]) 	
-	//
-	// IMPORTANT: WHY this VAO configuration step ?
-	// - during rendering stage, a call to "glDrawArrays()" or "glDrawElements()" will retrieve all its data on GPU from the currently bound VAO
-	// - in the "vertex shader", all declared "IN" variables are fetched from currently bound VBO at given "location ID" of the currently bound VAO
-	// - that's why the VAO MUST store the handle (i.e. kind of pointer) of all its associated VBOs at dedicated index in an array if indices (called "attribute index")
-	// -------------------------------------------------------------------
-	
-	// Initialize VAO: vertex array (the container of all VBOs and the EBO buffers)
-	//
-	// Create ande initialize a vertex array object (VAO) [it is a "container" of vertex buffer objects (VBO) and potential EBO]
-	// - create a VAO (kind of memory pointer or handle on GPU)
 	let vao = gl.createVertexArray();
-	// - bind "current" VAO
 	gl.bindVertexArray(vao); // IMPORTANT: all next GL commands will "affect/modify" the VAO "states" on GPU
-	//----------------------
 	// [A]: position buffer
-	//----------------------
-	// - bind "current" VBO
-	// HELP: the VAO is going to store the vbo_positions GPU pointer ("void* vbo_positions") at a given attribute ID (see next GL call)
 	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions);
-	// - attach VBO to VAO
-	// - tell how data is stored in "current" VBO in terms of size and format.
-	// - it specifies the "location" and data format of the array of generic vertex attributes at "index" ID to use when rendering
 	let vertexAttributeID = 1; // specifies the "index" of the generic vertex attribute to be modified
 	let dataSize = 3; // 3 for 3D positions. Specifies the number of components per generic vertex attribute. Must be 1, 2, 3, 4.
 	let dataType = gl.FLOAT; // data type
 	gl.vertexAttribPointer(vertexAttributeID, dataSize, dataType,
 							false, 0, 0); // unused parameters for the moment (normalized, stride, pointer)
-	// HELP: vertexAttribPointer() tell VAO to store the VBO handle at given attribute index "void* vbo_positions"
-	// - enable the use of VBO. It enable or disable a generic vertex attribute array
 	gl.enableVertexAttribArray(vertexAttributeID);
-	//----------------------
 	// [B]: normal buffer
-	//----------------------
-	// - bind "current" VBO
-	// HELP: the VAO is going to store the vbo_normals GPU pointer ("void* vbo_normals") at a given attribute ID (see next GL call)
 	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_normals);
-	// - attach VBO to VAO
-	// - tell how data is stored in "current" VBO in terms of size and format.
-	// - it specifies the "location" and data format of the array of generic vertex attributes at "index" ID to use when rendering
 	vertexAttributeID = 2; // specifies the "index" of the generic vertex attribute to be modified
 	dataSize = 3; // 3 for 3D normals. Specifies the number of components per generic vertex attribute. Must be 1, 2, 3, 4.
 	dataType = gl.FLOAT; // data type
 	gl.vertexAttribPointer(vertexAttributeID, dataSize, dataType,
 							false, 0, 0); // unused parameters for the moment (normalized, stride, pointer)
-	// HELP: vertexAttribPointer() tell VAO to store the VBO handle at given attribute index "void* vbo_normals"
-	// - enable the use of VBO. It enable or disable a generic vertex attribute array
 	gl.enableVertexAttribArray(vertexAttributeID);
-	//----------------------
 	// [C]: index buffer
-	//----------------------
-	// - bind "current" EBO
-	// HELP: the VAO is going to store the ebo GPU pointer ("void* ebo")
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
-	
-	// -------------------------------------------------------------------
-	// Part 3: Reset the "modified" GL states
-	// - the graphics card DRIVER hold a list of "current" elements per type (vao, vbo, ebo, etc...)
-	// -------------------------------------------------------------------
 	
 	// Reset GL states
 	gl.bindVertexArray(null);
@@ -401,7 +351,7 @@ function SceneManager_add(object)
 	asset_material_kd_list.push(object.Kd);
 	asset_material_ks_list.push(object.Ks);
 	asset_material_ns_list.push(object.Ns);
-    asset_material_T_list.push(object.T);
+	asset_material_T_list.push(object.T);
 }
 
 //--------------------------------------------------------------------------
@@ -439,65 +389,45 @@ function SceneManager_loadByParts(path, count)
 //--------------------------------------------------------------------------------------------------------
 function init_wgl()
 {
-	// ANIMATIONS // [=> Sylvain's API]
-	// - if animations, set this internal variable (it will refresh the window everytime)
 	ewgl.continuous_update = true;
 	
-	// CUSTOM USER INTERFACE
-	// - this will enable to use GPU "uniform" variables to be able to edit GPU constant variables (at rendering stage)
 	UserInterface.begin(); // name of html id
-		// LIGHT POSITION
-	    // - container (H: horizontal)
-		UserInterface.use_field_set('H', "LIGHT Position");
-			// - sliders (name, min, max, default value, callback called when value is modified)
-			// - update_wgl() is callrd to refresh screen
-			slider_x  = UserInterface.add_slider('X ', -100, 100, 0, update_wgl);
-			UserInterface.set_widget_color(slider_x,'#ff0000','#ffcccc');
-			slider_y  = UserInterface.add_slider('Y ', -100, 100, 80, update_wgl);
-			UserInterface.set_widget_color(slider_y,'#00bb00','#ccffcc');
-			slider_z  = UserInterface.add_slider('Z ', -100, 100, 30, update_wgl);
-			UserInterface.set_widget_color(slider_z, '#0000ff', '#ccccff');
+		UserInterface.use_field_set('H', "LIGHT Color");
+			slider_r  = UserInterface.add_slider('R ', 0, 30, 30, update_wgl);
+			UserInterface.set_widget_color(slider_r,'#ff0000','#ffcccc');
+			slider_g  = UserInterface.add_slider('G ', 0, 30, 28, update_wgl);
+			UserInterface.set_widget_color(slider_g,'#00bb00','#ccffcc');
+			slider_b  = UserInterface.add_slider('B ', 0, 30, 25, update_wgl);
+			UserInterface.set_widget_color(slider_b, '#0000ff', '#ccccff');
 		UserInterface.end_use();
-		// LIGHT Intensity
-	    // - container (H: horizontal)
-		UserInterface.use_field_set('H', "LIGHT Intensity");
-			// - sliders (name, min, max, default value, callback called when value is modified)
-			// - update_wgl() is callrd to refresh screen
-			slider_light_intensity  = UserInterface.add_slider('intensity', 0, 50, 20, update_wgl);
-		UserInterface.end_use();
-		// RENDERING
-		// - container (H: horizontal)
 		UserInterface.use_field_set('H', "RENDERING Mode");
 			checkbox_wireframe  = UserInterface.add_check_box('wireframe', false, update_wgl);
 		UserInterface.end_use();
+		sl_refl = UserInterface.add_slider("Reflection",0,100,30,update_wgl);
 	UserInterface.end();
 	
+	
+	// 1. Environnement map
+	// CubeMap texture creation
 	tex_envMap = TextureCubeMap();
-    tex_envMap.load(["images/skybox/px.jpg", "images/skybox/nx.jpg",
-                     "images/skybox/py.jpg", "images/skybox/ny.jpg",
-                     "images/skybox/nz.jpg", "images/skybox/pz.jpg"]);
-    
-    
-    // Create and initialize a shader program // [=> Sylvain's API - wrapper of GL code]
-	shaderProgramCube = ShaderProgram(vertexShaderCube, fragmentShaderCube, 'basic shader');
-    shaderProgramCar = ShaderProgram(vertexShaderCar, fragmentShaderCar, 'sky');
+	tex_envMap.load(["images/skybox/px.jpg","images/skybox/nx.jpg",
+	"images/skybox/py.jpg","images/skybox/ny.jpg",
+	"images/skybox/nz.jpg","images/skybox/pz.jpg"]).then(update_wgl);
+	// shader prog to render the cubemap
+	prg_envMap = ShaderProgram(sky_vert,sky_frag,'sky');
+	// geometry for the cube map (texture cube map is map on a cube)
+	sky_rend = Mesh.Cube().renderer(0, -1, -1);
+	
 
-    // Load cube
-    let mesh = Mesh.Cube();
-    cube_rend = mesh.renderer(0, -1, -1);
-
-
-	// Load the 3D asset (car model)
-	let dataPath = 'models/nissan-gtr/part'; // BEWARE: the "models" directory HAVE TO be placed in the "tp" directory near your javascript file for the TP
+	// 2. Object in the environnement
+	prg_car = ShaderProgram(vertexShader, fragmentShader, 'basic shader');
+	let dataPath = 'models/nissan-gtr/part';
 	let nbMeshes = 178; // this car model is a 3D model that has been splitted into 178 pieces
 	SceneManager_loadByParts(dataPath, nbMeshes);
-		
-	// Set default GL states
-	// - color to use when refreshing screen
-	gl.clearColor(0, 0, 0 ,1); // black opaque [values are between 0.0 and 1.0]
-	// - enable "depth test"
-	// => to optimize rendering when lots of triangles
-	// => you cannot control triangles ordering at rendering, but "z-buffer" prevent from rendering triangles behind previously rendered triangles
+
+	ewgl.scene_camera.set_scene_center(Vec3(0,0,0));
+
+	// gl.clearColor(0, 0, 0 ,1);
 	gl.enable(gl.DEPTH_TEST);
 }
 
@@ -506,66 +436,48 @@ function init_wgl()
 //--------------------------------------------------------------------------------------------------------
 function draw_wgl()
 {
-	// --------------------------------
-	// [1] - always do that
-	// --------------------------------
-	
-	// Clear the GL "color" and "depth" framebuffers (with OR)
+	gl.clearColor(0, 0, 0, 0);
 	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-	// --------------------------------
-	// [2] - render your scene
-	// --------------------------------
-	
-	// [part A] : set "current" shader program
+	// Render environment map
+	//-----------------------------------------------------------------------------------
+	// gl.disable(gl.DEPTH_TEST);
+	prg_envMap.bind();
+	Uniforms.projectionviewMatrix = ewgl.scene_camera.get_matrix_for_skybox();
+	Uniforms.TU = tex_envMap.bind(0);
+	sky_rend.draw(gl.TRIANGLES);
+	// gl.enable(gl.DEPTH_TEST);
 
-    shaderProgramCube.bind();
+	//-----------------------------------------------------------------------------------
 
 
-    Uniforms.uvpmat = ewgl.scene_camera.get_matrix_for_skybox();
-    Uniforms.tu = tex_envMap.bind(0);
-
-	
-    cube_rend.draw(gl.TRIANGLES);
-
-	// Set "current" shader program
-	shaderProgramCar.bind(); // [=> Sylvain's API - wrapper of GL code]
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-
-	// [part B] : set/modify GPU "uniform" variables of current shader program
-	
-	// Set uniforms // [=> Sylvain's API - wrapper of GL code]
-	//
-	// NOW that the "current" shader program is bound, we can update its assoiated "uniform" variables.
-	// - "uniforms" are variables on GPU in "constant memory" => their values are constant during a "draw command" such as drawArrays()
-	// - they can be seen as user custom parameters of your shaders
-	// - they can be accessed in any shader (vertex, fragment)
-	// - when creating a "shader program", shader text files are read and analyze by GL functions
-	// - a dictionnary is created with all "uniforms" declared in shader codes
-	// - calling "Uniforms.xxx" is used to update value of a "uniform" on GPU
-	// BEWARE: name MUST be the same as the one declared in your shaders "uniform" variable
-	// - here, we retrieve "slider" values from GUI (graphical user interface)
-	// - camera
-	// ---- retrieve current camera matrices ("view" matrix reacts to mouse events)
-	Uniforms.uProjectionMatrix = ewgl.scene_camera.get_projection_matrix();
-	const viewMatrix = ewgl.scene_camera.get_view_matrix();
+	// Render car
+	//-----------------------------------------------------------------------------------
+	prg_car.bind();
+	const projectionMatrix = ewgl.scene_camera.get_projection_matrix();
+	Uniforms.uProjectionMatrix = projectionMatrix;
+	let viewMatrix = ewgl.scene_camera.get_view_matrix();
 	Uniforms.uViewMatrix = viewMatrix;
-	// - set model matrix
-	// ---- configure YOUR custom transformations (scale, rotation, translation)
     let modelMatrix = Matrix.scale(0.02); // hard-coded "scale" to be able to see the 3D asset
 	Uniforms.uModelMatrix = modelMatrix;
-	// - model-view matrix
-	let mvm = Matrix.mult(viewMatrix, modelMatrix); // Model-view matrix
 	// - normal matrix
-	Uniforms.uNormalMatrix = mvm.inverse3transpose();
-	// LIGHT
-	// - light color
-	// Uniforms.uLightIntensity = [slider_r.value/100, slider_g.value/100, slider_b.value/100];
-	Uniforms.uLightIntensity = slider_light_intensity.value;
-	Uniforms.uLightPosition = mvm.transform(Vec3(slider_x.value, slider_y.value, slider_z.value)); // to get the position in the View space
-	
-	// [part C] : render your scene (3D model)
+	// Uniforms.uNormalMatrix = mvm.inverse3transpose();
+	Uniforms.uNormalModel = modelMatrix.inverse3transpose();
+	Uniforms.uNormalView = viewMatrix.inverse3transpose();
+	// - Light direction and intensity
+	Uniforms.uLightDirection = viewMatrix.transform(Vec3(200.0, 200.0, -200.0));
+	Uniforms.uLightIntensity = [slider_r.value, slider_g.value, slider_b.value];
+	// - Camera position
+	let cameraPosWorld = Matrix.mult(viewMatrix.inverse(), Vec4(0.0, 0.0, 0.0, 1.0));
+	Uniforms.uCameraPosW = cameraPosWorld;
+
+	// For reflection
+	Uniforms.TU = tex_envMap.bind(0);
+	Uniforms.k = 0.01 * sl_refl.value;
+
+	// Alpha blending (for transparency)
+	gl.enable(gl.BLEND);
+	gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 	
 	// Draw commands
 	// - rendering mode
@@ -586,29 +498,19 @@ function draw_wgl()
 		// - specular
 		Uniforms.uKs = asset_material_ks_list[i];
 		Uniforms.uNs = asset_material_ns_list[i];
-        Uniforms.uT  = asset_material_T_list[i];
+		// - transparency
+		Uniforms.uT = asset_material_T_list[i];
 	
-		// Bind "current" vertex array (VAO)
 		gl.bindVertexArray(asset_vao_list[i]);
-
-		// Draw command
-		// - render primitives from "current" array data (i.e. bounded VAO)
-		// - during rendering stage, a call to "glDrawArrays()" or "glDrawElements()" will retrieve all its data on GPU from the currently bound VAO
-		// - in the "vertex shader", all declared "IN" variables are fetched from currently bound VBO at given "location ID" of the currently bound VAO
-		// - that's why the VAO MUST store the handle (i.e. kind of pointer) of all its associated VBOs at dedicated index in an array if indices (called "attribute index")
+		
 		gl.drawElements(drawMode, asset_nbIndices_list[i]/*number of vertex indices*/, gl.UNSIGNED_INT/*data type in EBO index buffer*/, 0/*not used*/);
 	}
 	
-	// -------------------------------------------------------------------
-	// [3] - Reset the "modified" GL states
-	//     - the graphics card DRIVER hold a list of "current" elements per type (shader program, vao, vbo, ebo, etc...)
-	// -------------------------------------------------------------------
-		
+	gl.disable(gl.BLEND);
+	//-----------------------------------------------------------------------------------
+	
 	// Reset GL state(s)
-    gl.disable(gl.BLEND);
-	// - unbind vertex array
 	gl.bindVertexArray(null); // not mandatory. For optimization, could be removed.
-	// - unbind shader program
 	gl.useProgram(null); // not mandatory. For optimization, could be removed.
 }
 
