@@ -107,47 +107,6 @@ void main()
 `;
 
 //--------------------------------------------------------------------------------------------------------
-// REFLECTION AND REFRACTION
-//--------------------------------------------------------------------------------------------------------
-
-
-
-var vertexShaderRef = 
-`#version 300 es
-precision highp float;
-
-// OUTPUT
-out vec2 texCoord;
-
-void main()
-{
-	float x = -1.0 + float((gl_VertexID & 1) << 2);
-	float y = -1.0 + float((gl_VertexID & 2) << 1);
-
-	texCoord.x = x * 0.5 + 0.5;
-	texCoord.y = y * 0.5 + 0.5;
-
-	gl_Position = vec4(x, y, 0.0, 1.0);
-}
-`;
-
-var fragmentShaderRef = 
-`#version 300 es
-precision highp float;
-
-// INPUT
-in vec2 texCoord;
-
-// OUTPUT
-out vec4 oColor;
-
-void main()
-{
-	oColor = vec4(1.0, 0.0, 0.0, 1.0);
-}
-`;
-
-//--------------------------------------------------------------------------------------------------------
 // WATER
 //--------------------------------------------------------------------------------------------------------
 var vertexShaderWater =
@@ -185,13 +144,14 @@ out vec4 oFragmentColor;
 
 // UNIFORM
 uniform sampler2D uSamplerReflection;
-uniform sampler2D uSamplerRefraction;
+//uniform sampler2D uSamplerRefraction;
 
 void main()
 {
 	vec3 reflection = texture(uSamplerReflection, texCoord).rgb;
-	vec3 refraction = texture(uSamplerRefraction, texCoord).rgb;
-	oFragmentColor = vec4(0.5*reflection + 0.5*refraction, 1.0);
+	//vec3 refraction = texture(uSamplerRefraction, texCoord).rgb;
+	//oFragmentColor = vec4(0.5*reflection + 0.5*refraction, 1.0);
+	oFragmentColor = vec4(reflection, 1.0);
 }
 `;
 
@@ -251,7 +211,8 @@ var skybox = null;
 
 
 // FBO for ref.
-var fbo = null;
+var fboLec = null;
+var fboRac = null;
 var texReflection = null;
 var texRefraction = null;
 var fboTexWidth = 1024;
@@ -399,7 +360,6 @@ function init_wgl()
 	shaderProgramTerrain = ShaderProgram(vertexShaderTerrain, fragmentShaderTerrain, 'terrain shader');
 	shaderProgramWater = ShaderProgram(vertexShaderWater, fragmentShaderWater, 'water shader');
     shaderProgramSky = ShaderProgram(vertexShaderSky, fragmentShaderSky, 'skybox shader');
-	shaderProgramRef = ShaderProgram(vertexShaderRef, fragmentShaderRef, 'ref shader');
 
 	// Build mesh
 	buildTerrain();
@@ -420,16 +380,6 @@ function init_wgl()
 		// - UNSIGNED_BYTE: each component is an "unsigned char" (i.e. value in [0;255]) => NOTE: on GPU data is automatically accessed with float type in [0;1] by default
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, terrain_image);
 		
-		// Configure "filtering" mode
-		// => what to do when, projected on screen, a texel of an image is smaller than a screen pixel or when a texel covers several screen pixel
-		// => example: when a texture is mapped onto a terrain in the far distance, or when you zoom a lot
-		// NEAREST: fast but low quality (neearest texel is used)
-		//gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-		// LINEAR: slower but better quality => take 4 neighboring pixels and compute the mean value
-		//gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-		//gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-		// MIPMAPPING: build a pyramid of level of details from imaghe size to 1 pixel, duviding each image size by 2
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
 		gl.generateMipmap(gl.TEXTURE_2D); // => build the pyramid of textrues automatically
@@ -470,14 +420,16 @@ function init_wgl()
 	gl.bindTexture(gl.TEXTURE_2D, null);
 
 
-	fbo = gl.createFramebuffer();
-	gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-
+	//   FBOs
+	fboLec = gl.createFramebuffer();
+	gl.bindFramebuffer(gl.FRAMEBUFFER, fboLec);
 	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texReflection, 0);
-	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, texRefraction, 0);
+	gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
 
-	gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
-
+	fboRac = gl.createFramebuffer();
+	gl.bindFramebuffer(gl.FRAMEBUFFER, fboRac);
+	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texRefraction, 0);
+	gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
 	gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
 	// Set default GL states
@@ -492,58 +444,34 @@ function init_wgl()
 //--------------------------------------------------------------------------------------------------------
 function draw_wgl()
 {
-	gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+	/////////////////////////////////////////////
+	// FIRST PASS FOR REFLECTION ////////////////
+	/////////////////////////////////////////////
+
+	gl.bindFramebuffer(gl.FRAMEBUFFER, fboLec);
 	gl.viewport(0, 0, fboTexWidth, fboTexHeight);
-	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+	gl.clear(gl.COLOR_BUFFER_BIT /*| gl.DEPTH_BUFFER_BIT*/);
+
+	// let caminf = ewgl.scene_camera.get_look_info();
+	// let E = caminf[0];
+	// let D = caminf[1];
+	// let U = Vec3(0, 1, 0);
+	// ewgl.scene_camera.look(E, D, U);
 
 	/////////////////////////////////////////////
-	shaderProgramRef.bind(); // FBO /////////////
-	/////////////////////////////////////////////
-
-	gl.drawArrays(gl.TRIANGLES, 0, 2);
-
-	gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-	gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-
-    /////////////////////////////////////////////
     shaderProgramSky.bind(); // SKY /////////////
-    /////////////////////////////////////////////
 
     Uniforms.uvpmat = ewgl.scene_camera.get_matrix_for_skybox()
     Uniforms.tu = skybox.bind() 
     
     cube_rend.draw(gl.TRIANGLES)
 
-    
-
-    /////////////////////////////////////////////
-	shaderProgramWater.bind(); // WATER /////////
-    /////////////////////////////////////////////
+	/////////////////////////////////////////////
+	shaderProgramTerrain.bind(); // TERRAIN /////
 
 	var pMat = ewgl.scene_camera.get_projection_matrix();
 	var vMat = ewgl.scene_camera.get_view_matrix();
     var mMat = Matrix.scale(1.0);
-
-	Uniforms.uProjectionMatrix = pMat;
-	Uniforms.uViewMatrix = vMat;
-
-	gl.activeTexture(gl.TEXTURE0);
-	gl.bindTexture(gl.TEXTURE_2D, texReflection);
-	Uniforms.uSamplerReflection = 0;
-	
-	gl.activeTexture(gl.TEXTURE1);
-	gl.bindTexture(gl.TEXTURE_2D, texRefraction);
-	Uniforms.uSamplerRefraction = 1;
-
-	gl.bindVertexArray(vaoWater);
-	gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
-
-    
-    /////////////////////////////////////////////
-	shaderProgramTerrain.bind(); // TERRAIN /////
-    /////////////////////////////////////////////
 
     
 	Uniforms.uMeshColor = [230/255, 66/255, 16/255];
@@ -564,10 +492,73 @@ function draw_wgl()
 
 	gl.bindVertexArray(vaoTerrain);
 	gl.drawElements(gl.TRIANGLES, nbMeshIndices, gl.UNSIGNED_INT, 0);
+	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+
+
+
+
+	/////////////////////////////////////////////
+	// THIRD PASS FOR REAL RENDERING ////////////
+	/////////////////////////////////////////////
+
     
+	gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+	gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+	
+	/////////////////////////////////////////////
+    shaderProgramSky.bind(); // SKY /////////////
+
+    Uniforms.uvpmat = ewgl.scene_camera.get_matrix_for_skybox()
+    Uniforms.tu = skybox.bind() 
+    
+    cube_rend.draw(gl.TRIANGLES)    
+    
+    /////////////////////////////////////////////
+	shaderProgramTerrain.bind(); // TERRAIN /////
+
+    
+	// Uniforms.uMeshColor = [230/255, 66/255, 16/255];
+	// Uniforms.uProjectionMatrix = pMat;
+	// Uniforms.uViewMatrix = vMat;
+    // let nvm = Matrix.mult(vMat, mMat);
+    // Uniforms.uNormalMatrix = nvm.inverse3transpose();
+    // Uniforms.uLightIntensity = 50.0;
+    // Uniforms.uLightPosition = [1.0,1.0,1.0];
+	// Uniforms.uHeight = jMax;
+	// Uniforms.uWidth = iMax;
+	
+
+  	// gl.activeTexture(gl.TEXTURE0);
+	// gl.bindTexture(gl.TEXTURE_2D, texture);
+
+	// Uniforms.uSampler = 0;
+
+	gl.bindVertexArray(vaoTerrain);
+	gl.drawElements(gl.TRIANGLES, nbMeshIndices, gl.UNSIGNED_INT, 0);
+
+	/////////////////////////////////////////////
+	shaderProgramWater.bind(); // WATER /////////
+    /////////////////////////////////////////////
+
+	Uniforms.uProjectionMatrix = pMat;
+	Uniforms.uViewMatrix = vMat;
+
+	gl.activeTexture(gl.TEXTURE0);
+	gl.bindTexture(gl.TEXTURE_2D, texReflection);
+	Uniforms.uSamplerReflection = 0;
+	
+	//gl.activeTexture(gl.TEXTURE1);
+	//gl.bindTexture(gl.TEXTURE_2D, texRefraction);
+	//Uniforms.uSamplerRefraction = 1;
+
+	gl.bindVertexArray(vaoWater);
+	gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
 	
 	gl.bindVertexArray(null);
 	gl.useProgram(null);
+
 }
 
 //--------------------------------------------------------------------------------------------------------
