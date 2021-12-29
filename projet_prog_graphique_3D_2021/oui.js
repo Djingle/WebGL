@@ -394,9 +394,9 @@ function init_wgl()
 
     //SKYBOX
     skybox = TextureCubeMap();
-    skybox.load(["textures/skybox/skybox2/right.png", "textures/skybox/skybox2/left.png",
-                "textures/skybox/skybox2/top.png", "textures/skybox/skybox2/bottom.png",
-                "textures/skybox/skybox2/back.png", "textures/skybox/skybox2/front.png"])
+    skybox.load(["textures/skybox/skybox3/right.png", "textures/skybox/skybox3/left.png",
+                "textures/skybox/skybox3/top.png", "textures/skybox/skybox3/bottom.png",
+                "textures/skybox/skybox3/back.png", "textures/skybox/skybox3/front.png"])
 	let cube = Mesh.Cube()
     cube_rend = cube.renderer(0, -1, -1)
 
