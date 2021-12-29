@@ -25,6 +25,7 @@ uniform mat4 uViewMatrix;
 uniform mat3 uNormalMatrix;
 uniform float uHeight;
 uniform float uWidth;
+uniform highp int uForRef;
 
 // - texture
 uniform sampler2D uSampler;
@@ -36,6 +37,10 @@ layout(location=1) in vec2 position_in;
 out vec2 v_textureCoord;
 out vec3 v_pos;
 out vec3 v_nor;
+out vec3 m_pos;
+out vec3 m_nor;
+
+
 
 // MAIN PROGRAM
 void main()
@@ -46,14 +51,16 @@ void main()
 	float terrainHeight = texture(uSampler, position_in).r;
 	position.y += terrainHeight;
 
+    m_pos = position;
+
 	vec3 normal = calculateNormal(position, uSampler, uHeight, uWidth);
+    m_nor = normalize(normal);
 
     v_pos = (uViewMatrix * vec4(position, 1.0)).xyz;
     v_nor = normalize(uNormalMatrix * normal);
-	
 
 
-	gl_Position = uProjectionMatrix * uViewMatrix * vec4(position, 1.0);
+    gl_Position = uProjectionMatrix * uViewMatrix * vec4(position, 1.0);
 }
 `;
 
@@ -67,96 +74,44 @@ precision highp float;
 in vec2 v_textureCoord;
 in vec3 v_pos;
 in vec3 v_nor;
+in vec3 m_pos;
+in vec3 m_nor;
 
 // OUTPUT
 out vec4 oFragmentColor;
 
 // UNIFORM
 // - color
-uniform vec3 uMeshColor;
+uniform highp int uForRef;
+uniform float uWaterHeight;
 
 // - light information
-uniform float uLightIntensity;
 uniform vec3 uLightPosition;
 
 // - texture
-uniform sampler2D uSampler;
+uniform sampler2D uGrassSampler;
 
 void main()
 {
-    vec3 p = v_pos;
-    vec3 n = normalize(v_nor);
+    if (uForRef==1 && m_pos.y<uWaterHeight) discard;
+    if (uForRef==2 && m_pos.y>uWaterHeight) discard;
 
-    vec3 Ka = uMeshColor.rgb;
-    Ka = vec3(0.0, 0.0, 0.0)/255.0;
-    vec3 Kd = vec3(252.0, 186.0, 3.0)/255.0;
+    vec2 texCoord = v_textureCoord * 6.0;
+	vec4 textureColor = texture(uGrassSampler, texCoord);
 
-    vec3 Ia = uLightIntensity * Ka;
+    vec3 Kd = textureColor.rgb;
 
-    vec3 lightDir = uLightPosition - p;
+    vec3 lightDir = uLightPosition - m_pos;
     float d2 = dot(lightDir, lightDir);
     lightDir /= sqrt(d2);
-    float diffuse = max(0.0, dot(n, lightDir));
-    vec3 Id = (uLightIntensity / d2) * Kd * vec3(diffuse);
+    float diffuse = max(0.0, dot(m_nor, lightDir));
+    vec3 Id = 3.0 * Kd * vec3(diffuse);
     Id /= M_PI;
 
-	vec4 textureColor = texture(uSampler, v_textureCoord);
-
-    oFragmentColor =  vec4((0.5 * Ia) + (0.5 * Id), 1.0);
+    oFragmentColor =  vec4(Id, 1.0);
+    //oFragmentColor = textureColor;
 }
 `;
-
-//--------------------------------------------------------------------------------------------------------
-// WATER
-//--------------------------------------------------------------------------------------------------------
-var vertexShaderWater =
-`#version 300 es
-precision highp float;
-
-// INPUT
-layout(location = 0) in vec2 position_in;
-
-// OUTPUT
-out vec2 texCoord;
-
-// UNIFORM
-uniform mat4 uProjectionMatrix;
-uniform mat4 uViewMatrix;
-
-
-void main()
-{
-	texCoord = position_in;
-	vec3 position = vec3(position_in.x, 0.45, position_in.y);
-	gl_Position = uProjectionMatrix * uViewMatrix * vec4(position, 1.0);
-}
-`;
-
-var fragmentShaderWater =
-`#version 300 es
-precision highp float;
-
-// INPUT
-in vec2 texCoord;
-
-// OUTPUT
-out vec4 oFragmentColor;
-
-// UNIFORM
-uniform sampler2D uSamplerReflection;
-//uniform sampler2D uSamplerRefraction;
-
-void main()
-{
-	vec3 reflection = texture(uSamplerReflection, texCoord).rgb;
-	//vec3 refraction = texture(uSamplerRefraction, texCoord).rgb;
-	//oFragmentColor = vec4(0.5*reflection + 0.5*refraction, 1.0);
-	oFragmentColor = vec4(reflection, 1.0);
-}
-`;
-
-
-
 
 //--------------------------------------------------------------------------------------------------------
 // SKY
@@ -194,35 +149,186 @@ void main()
 
 
 //--------------------------------------------------------------------------------------------------------
+// WATER
+//--------------------------------------------------------------------------------------------------------
+var vertexShaderWater =
+`#version 300 es
+precision highp float;
+
+// INPUT
+layout(location = 0) in vec2 position_in;
+
+// OUTPUT
+out vec4 clip_pos;
+out vec2 tex_pos;
+out vec3 m_pos;
+out vec3 v_pos;
+
+// UNIFORM
+uniform mat4 uProjectionMatrix;
+uniform mat4 uViewMatrix;
+uniform float uWaterHeight;
+
+void main()
+{
+    tex_pos = position_in;
+    m_pos = vec3(position_in.x, uWaterHeight, position_in.y);
+    v_pos = vec3(uViewMatrix * vec4(m_pos, 1.0));
+	clip_pos = uProjectionMatrix * uViewMatrix * vec4(m_pos, 1.0);
+    gl_Position = clip_pos;
+}
+`;
+
+var fragmentShaderWater =
+`#version 300 es
+precision highp float;
+
+#define M_PI 3.14159265358979
+
+
+// INPUT
+in vec4 clip_pos;
+in vec2 tex_pos;
+in vec3 m_pos;
+in vec3 v_pos;
+
+// OUTPUT
+out vec4 oFragmentColor;
+
+// UNIFORM
+uniform sampler2D uSamplerReflection;
+uniform sampler2D uSamplerRefraction;
+uniform sampler2D uSamplerDistortion;
+uniform sampler2D uSamplerNormale;
+uniform vec3 uCamPos;
+uniform vec3 uLightPosition;
+uniform float uTime;
+
+void main()
+{
+    vec3 normale = normalize(vec3(0, 1, 0));
+    vec3 viewDir = normalize(uCamPos - m_pos);
+    float angle = acos(dot(viewDir, normale))/M_PI;
+
+    vec3 n = texture(uSamplerNormale, tex_pos + uTime/30.0).rgb;
+    n.x = (n.x*2.0-1.0);
+    n.z = (n.z*2.0-1.0);
+    n.y = 10.0;
+    n = normalize(n);
+
+    vec2 disto = texture(uSamplerDistortion, tex_pos + uTime/30.0).rg*2.0-1.0;
+
+    vec2 ndc = (clip_pos.xy/clip_pos.w)/2.0 + 0.5;
+    ndc += disto/50.0;
+
+    vec2 coord_rac = vec2(ndc.x, ndc.y);
+    vec2 coord_lec = vec2(ndc.x, -ndc.y);
+	vec4 reflection = texture(uSamplerReflection, coord_lec);
+	vec4 refraction = texture(uSamplerRefraction, coord_rac);
+
+    vec3 color = mix(reflection, refraction, 1.0-2.5*angle).rgb;
+
+    vec3 lightDir = normalize(uLightPosition - m_pos);
+    vec3 halfDir = normalize(viewDir + lightDir);
+    float specularTerm = max(0.0, pow(dot(n, halfDir), 128.0));
+    vec3 Is = 1.0 * vec3(specularTerm);
+    
+    //float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
+    oFragmentColor = vec4(Is + color, 1.0);
+
+    //oFragmentColor = vec4(color, 1.0);
+}
+`;
+
+
+//--------------------------------------------------------------------------------------------------------
+// GUI
+//--------------------------------------------------------------------------------------------------------
+
+
+
+var vertexShaderUI =
+`#version 300 es
+precision highp float;
+
+// INPUT
+layout(location=0) in vec2 position_in;
+
+// OUTPUT
+out vec2 tex_coord;
+
+void main()
+{
+	tex_coord = position_in;
+	gl_Position = vec4(position_in.x, position_in.y, -1.0, 1.0);
+}
+`;
+
+var fragmentShaderUI = 
+`#version 300 es
+precision highp float;
+
+// INPUT
+in vec2 tex_coord;
+
+// UNIFORM
+uniform sampler2D uSampler;
+
+// OUTPUT
+out vec4 oFragmentColor;
+
+void main()
+{
+    // vec2 coord = tex_coord*0.5+0.5;
+    // vec4 reflection = texture(uSamplerReflection, coord);
+    // vec4 refraction = texture(uSamplerRefraction, coord);
+    // oFragmentColor = mix(reflection, refraction, 0.5);
+    // //oFragmentColor = refraction;
+
+}
+`;
+
+
+//--------------------------------------------------------------------------------------------------------
 // Global variables
 //--------------------------------------------------------------------------------------------------------
+
+// Shaders
 var shaderProgramTerrain = null;
 var shaderProgramWater = null;
 var shaderProgramSky = null;
-var shaderProgramRef = null;
+var shaderProgramUI = null;
 
+// VAOS
 var vaoTerrain = null;
 var vaoWater = null;
+var vaoUI = null;
 
-var texture = null;
+var texture_terrain = null;
+var texture_distortion = null;
+var texture_grass = null;
+var texture_normale = null;
 
 var cube_rend;
 var skybox = null;
-
 
 // FBO for ref.
 var fboLec = null;
 var fboRac = null;
 var texReflection = null;
 var texRefraction = null;
-var fboTexWidth = 1024;
-var fboTexHeight = 1024;
+var fboTexWidth = 2048;
+var fboTexHeight = 2048;
 
 
 // Terrain
 var jMax = 100;
 var iMax = 100;
 var nbMeshIndices = 0;
+
+// GUI
+var checkbox_debug;
+var slider_water;
 
 
 
@@ -348,6 +454,56 @@ function buildWater()
 	update_wgl();
 }
 
+
+function buildUI(width, height)
+{
+    gl.deleteVertexArray(vaoUI);
+
+    let data_positions = new Float32Array(8);
+	data_positions[0] = -1;
+	data_positions[1] = -1;
+	data_positions[2] = -1;
+	data_positions[3] = 1;
+	data_positions[4] = 1;
+	data_positions[5] = 1;
+	data_positions[6] = 1;
+	data_positions[7] = -1;
+	
+	let vbo_positions_w = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions_w); 
+	gl.bufferData(gl.ARRAY_BUFFER, data_positions, gl.STATIC_DRAW);
+	gl.bindBuffer(gl.ARRAY_BUFFER, null);
+	
+	let data_indices = new Uint32Array(6)
+	data_indices[0] = 0;
+	data_indices[1] = 1;
+	data_indices[2] = 3;
+	data_indices[3] = 1;
+	data_indices[4] = 2;
+	data_indices[5] = 3;
+	
+	let ebo = gl.createBuffer();
+	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+	gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data_indices, gl.STATIC_DRAW);
+	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+	
+	vaoUI = gl.createVertexArray();
+	gl.bindVertexArray(vaoUI);
+	gl.bindBuffer(gl.ARRAY_BUFFER, vbo_positions_w);
+	let vertexAttributeID = 0;
+	let dataSize = 2;
+	let dataType = gl.FLOAT;
+	gl.vertexAttribPointer(vertexAttributeID, dataSize, dataType, false, 0, 0);
+	gl.enableVertexAttribArray(vertexAttributeID);
+	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+	
+	gl.bindVertexArray(null);
+	gl.bindBuffer(gl.ARRAY_BUFFER, null);
+	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+
+	update_wgl();
+}
+
 //--------------------------------------------------------------------------------------------------------
 // Initialize graphics objects and GL states
 //--------------------------------------------------------------------------------------------------------
@@ -355,42 +511,87 @@ function init_wgl()
 {
 	// ANIMATIONS // [=> Sylvain's API]
 	ewgl.continuous_update = true;
+
+
+    UserInterface.begin();
+
+        UserInterface.use_field_set('H', "Debug");
+        checkbox_debug = UserInterface.add_check_box('Debug UI', false, update_wgl);
+        slider_water = UserInterface.add_slider('Water Height', 0, 50, 20, update_wgl);
+        UserInterface.end_use();
+    UserInterface.end();
 	
 	// Create and initialize a shader program // [=> Sylvain's API - wrapper of GL code]
 	shaderProgramTerrain = ShaderProgram(vertexShaderTerrain, fragmentShaderTerrain, 'terrain shader');
 	shaderProgramWater = ShaderProgram(vertexShaderWater, fragmentShaderWater, 'water shader');
     shaderProgramSky = ShaderProgram(vertexShaderSky, fragmentShaderSky, 'skybox shader');
+    shaderProgramUI = ShaderProgram(vertexShaderUI, fragmentShaderUI, 'UI shader', 0, 100, 50, update_wgl);
 
 	// Build mesh
 	buildTerrain();
 	buildWater();
+    buildUI(gl.canvas.width, gl.canvas.height);
 	
 	// TEXTURE
-	texture = gl.createTexture();
+	texture_terrain = gl.createTexture();
 	const terrain_image = new Image();
     terrain_image.src = 'textures/heightmap2.png';
     terrain_image.onload = () => {
-	    
-		// Bind texture as the "current" one
-		// - each followinf GL call will affect its internal state
-        gl.bindTexture(gl.TEXTURE_2D, texture);
+	    gl.bindTexture(gl.TEXTURE_2D, texture_terrain);
 		
-		// Configure data type (storage on GPU) and upload image data to GPU
-		// - RGBA: 4 comonents
-		// - UNSIGNED_BYTE: each component is an "unsigned char" (i.e. value in [0;255]) => NOTE: on GPU data is automatically accessed with float type in [0;1] by default
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, terrain_image);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, terrain_image);
 		
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
-		gl.generateMipmap(gl.TEXTURE_2D); // => build the pyramid of textrues automatically
-		
-		// Configure wrapping behavior: what to do when texture coordinates exceed [0;1]
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 	    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);	
 		
-		// Clean GL state
         gl.bindTexture(gl.TEXTURE_2D, null);
     };
+
+    texture_grass = gl.createTexture();
+    const grass_image = new Image();
+    grass_image.src = 'textures/grass.png';
+    grass_image.onload = () => {
+        gl.bindTexture(gl.TEXTURE_2D, texture_grass);
+
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, grass_image);
+		
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+    }
+
+    texture_distortion = gl.createTexture();
+    const distortion_image = new Image();
+    distortion_image.src = 'textures/distortion_map.png';
+    distortion_image.onload = () => {
+        gl.bindTexture(gl.TEXTURE_2D, texture_distortion);
+
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, distortion_image);
+
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+    }
+
+    texture_normale = gl.createTexture();
+    const normale_image = new Image();
+    normale_image.src = 'textures/normal_map.png';
+    normale_image.onload = () => {
+        gl.bindTexture(gl.TEXTURE_2D, texture_normale);
+
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, distortion_image);
+
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+    }
+
 
     //SKYBOX
     skybox = TextureCubeMap();
@@ -439,6 +640,7 @@ function init_wgl()
 	gl.enable(gl.DEPTH_TEST);
 }
 
+
 //--------------------------------------------------------------------------------------------------------
 // Render scene
 //--------------------------------------------------------------------------------------------------------
@@ -447,16 +649,20 @@ function draw_wgl()
 	/////////////////////////////////////////////
 	// FIRST PASS FOR REFLECTION ////////////////
 	/////////////////////////////////////////////
+    const waterHeight = slider_water.value/50;
+    const lightPosition = [10.0, 50.0, -30.0];
 
 	gl.bindFramebuffer(gl.FRAMEBUFFER, fboLec);
 	gl.viewport(0, 0, fboTexWidth, fboTexHeight);
-	gl.clear(gl.COLOR_BUFFER_BIT /*| gl.DEPTH_BUFFER_BIT*/);
+	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-	// let caminf = ewgl.scene_camera.get_look_info();
-	// let E = caminf[0];
-	// let D = caminf[1];
-	// let U = Vec3(0, 1, 0);
-	// ewgl.scene_camera.look(E, D, U);
+	let caminf = ewgl.scene_camera.get_look_info();
+	let E = Vec3(caminf[0].xyz);
+    E.y = E.y - 2 * (E.y - waterHeight);
+	let D = Vec3(caminf[1]);
+    D.y = -D.y;
+	let U = Vec3(0, 1, 0);
+	ewgl.scene_camera.look(E, D, U);
 
 	/////////////////////////////////////////////
     shaderProgramSky.bind(); // SKY /////////////
@@ -473,39 +679,74 @@ function draw_wgl()
 	var vMat = ewgl.scene_camera.get_view_matrix();
     var mMat = Matrix.scale(1.0);
 
-    
-	Uniforms.uMeshColor = [230/255, 66/255, 16/255];
 	Uniforms.uProjectionMatrix = pMat;
 	Uniforms.uViewMatrix = vMat;
     let nvm = Matrix.mult(vMat, mMat);
     Uniforms.uNormalMatrix = nvm.inverse3transpose();
-    Uniforms.uLightIntensity = 50.0;
-    Uniforms.uLightPosition = [1.0,1.0,1.0];
+    Uniforms.uLightPosition = lightPosition;
 	Uniforms.uHeight = jMax;
 	Uniforms.uWidth = iMax;
+    Uniforms.uForRef = 1;
+    Uniforms.uWaterHeight = waterHeight;
 	
 
   	gl.activeTexture(gl.TEXTURE0);
-	gl.bindTexture(gl.TEXTURE_2D, texture);
-
+	gl.bindTexture(gl.TEXTURE_2D, texture_terrain);
 	Uniforms.uSampler = 0;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, texture_grass);
+    Uniforms.uGrassSampler = 1;
+
 
 	gl.bindVertexArray(vaoTerrain);
 	gl.drawElements(gl.TRIANGLES, nbMeshIndices, gl.UNSIGNED_INT, 0);
+
+
+    /////////////////////////////////////////////
+	// SECOND PASS FOR REFRACTION ///////////////
+	/////////////////////////////////////////////
+
+    
+    
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fboRac);
+	gl.viewport(0, 0, fboTexWidth, fboTexHeight);
 	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
+    ewgl.scene_camera.look(caminf[0], caminf[1], Vec3(0,1,0));
+        
+    pMat = ewgl.scene_camera.get_projection_matrix();
+	vMat = ewgl.scene_camera.get_view_matrix();
+    mMat = Matrix.scale(1.0);
+
+	/////////////////////////////////////////////
+    shaderProgramSky.bind(); // SKY /////////////
+
+    Uniforms.uvpmat = ewgl.scene_camera.get_matrix_for_skybox()
+    Uniforms.tu = skybox.bind() 
+    
+    cube_rend.draw(gl.TRIANGLES)
+
+	/////////////////////////////////////////////
+	shaderProgramTerrain.bind(); // TERRAIN /////
+
+    Uniforms.uProjectionMatrix = pMat;
+	Uniforms.uViewMatrix = vMat;
+    nvm = Matrix.mult(vMat, mMat);
+    Uniforms.uNormalMatrix = nvm.inverse3transpose();
+    Uniforms.uForRef = 2;
 
 
-
+	gl.bindVertexArray(vaoTerrain);
+	gl.drawElements(gl.TRIANGLES, nbMeshIndices, gl.UNSIGNED_INT, 0);
 
 	/////////////////////////////////////////////
 	// THIRD PASS FOR REAL RENDERING ////////////
 	/////////////////////////////////////////////
-
     
 	gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 	gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
 	
 	/////////////////////////////////////////////
     shaderProgramSky.bind(); // SKY /////////////
@@ -517,23 +758,8 @@ function draw_wgl()
     
     /////////////////////////////////////////////
 	shaderProgramTerrain.bind(); // TERRAIN /////
-
-    
-	// Uniforms.uMeshColor = [230/255, 66/255, 16/255];
-	// Uniforms.uProjectionMatrix = pMat;
-	// Uniforms.uViewMatrix = vMat;
-    // let nvm = Matrix.mult(vMat, mMat);
-    // Uniforms.uNormalMatrix = nvm.inverse3transpose();
-    // Uniforms.uLightIntensity = 50.0;
-    // Uniforms.uLightPosition = [1.0,1.0,1.0];
-	// Uniforms.uHeight = jMax;
-	// Uniforms.uWidth = iMax;
 	
-
-  	// gl.activeTexture(gl.TEXTURE0);
-	// gl.bindTexture(gl.TEXTURE_2D, texture);
-
-	// Uniforms.uSampler = 0;
+    Uniforms.uForRef = 0;
 
 	gl.bindVertexArray(vaoTerrain);
 	gl.drawElements(gl.TRIANGLES, nbMeshIndices, gl.UNSIGNED_INT, 0);
@@ -544,21 +770,57 @@ function draw_wgl()
 
 	Uniforms.uProjectionMatrix = pMat;
 	Uniforms.uViewMatrix = vMat;
+    Uniforms.uWaterHeight = waterHeight;
+    Uniforms.uCamPos = Vec3(caminf[0]);
+    Uniforms.uTime = ewgl.current_time;
+    Uniforms.uLightPosition = lightPosition;
 
 	gl.activeTexture(gl.TEXTURE0);
 	gl.bindTexture(gl.TEXTURE_2D, texReflection);
 	Uniforms.uSamplerReflection = 0;
 	
-	//gl.activeTexture(gl.TEXTURE1);
-	//gl.bindTexture(gl.TEXTURE_2D, texRefraction);
-	//Uniforms.uSamplerRefraction = 1;
+	gl.activeTexture(gl.TEXTURE1);
+	gl.bindTexture(gl.TEXTURE_2D, texRefraction);
+	Uniforms.uSamplerRefraction = 1;
+
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, texture_distortion);
+    Uniforms.uSamplerDistortion = 2;
+
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, texture_normale);
+    Uniforms.uSamplerNormale = 3;
 
 	gl.bindVertexArray(vaoWater);
 	gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
+
+
+    if (checkbox_debug.checked)
+    {
+        /////////////////////////////////////////////
+        shaderProgramUI.bind(); // UI ///////////////
+        /////////////////////////////////////////////
+
+        gl.viewport(0, 0, gl.canvas.width/3, gl.canvas.height/3);
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texReflection);
+        Uniforms.uSamplerReflection = 0;
+        
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, texRefraction);
+        Uniforms.uSamplerRefraction = 1;
+
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, texture_normale);
+        Uniforms.uSamplerNormale = 2;
+
+        gl.bindVertexArray(vaoUI);
+        gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
+    }
 	
 	gl.bindVertexArray(null);
 	gl.useProgram(null);
-
 }
 
 //--------------------------------------------------------------------------------------------------------
