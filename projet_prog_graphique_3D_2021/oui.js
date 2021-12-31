@@ -84,6 +84,8 @@ out vec4 oFragmentColor;
 // - color
 uniform highp int uForRef;
 uniform float uWaterHeight;
+uniform float uHeight;
+uniform float uWidth;
 
 // - light information
 uniform vec3 uLightPosition;
@@ -96,10 +98,15 @@ void main()
     if (uForRef==1 && m_pos.y<uWaterHeight) discard;
     if (uForRef==2 && m_pos.y>uWaterHeight) discard;
 
-    vec2 texCoord = v_textureCoord * 6.0;
+    //vec2 texCoord = v_textureCoord * 6.0;
+	vec2 texCoord = mod(v_textureCoord*(uHeight-1.0), 1.0);
 	vec4 textureColor = texture(uGrassSampler, texCoord);
 
-    vec3 Kd = textureColor.rgb;
+	vec3 Kd;
+    //vec3 Kd = textureColor.rgb;
+
+	if (texCoord.x>0.95 || texCoord.x<0.05 || texCoord.y<0.05 || texCoord.y>0.95) Kd = vec3(255.0,59.0,216.0)/255.0;
+	else Kd = vec3(0, 0, 0);
 
     vec3 lightDir = uLightPosition - m_pos;
     float d2 = dot(lightDir, lightDir);
@@ -322,8 +329,8 @@ var fboTexHeight = 2048;
 
 
 // Terrain
-var jMax = 100;
-var iMax = 100;
+var jMax = 50;
+var iMax = 50;
 var nbMeshIndices = 0;
 
 // GUI
