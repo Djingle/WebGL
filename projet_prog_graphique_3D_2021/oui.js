@@ -109,7 +109,6 @@ void main()
     Id /= M_PI;
 
     oFragmentColor =  vec4(Id, 1.0);
-    //oFragmentColor = textureColor;
 }
 `;
 
@@ -233,10 +232,7 @@ void main()
     float specularTerm = max(0.0, pow(dot(n, halfDir), 128.0));
     vec3 Is = 1.0 * vec3(specularTerm);
     
-    //float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
     oFragmentColor = vec4(Is + color, 1.0);
-
-    //oFragmentColor = vec4(color, 1.0);
 }
 `;
 
@@ -516,18 +512,16 @@ function init_wgl()
     UserInterface.begin();
 
         UserInterface.use_field_set('H', "Debug");
-        checkbox_debug = UserInterface.add_check_box('Debug UI', false, update_wgl);
+        //checkbox_debug = UserInterface.add_check_box('Debug UI', false, update_wgl);
         slider_water = UserInterface.add_slider('Water Height', 0, 50, 20, update_wgl);
         UserInterface.end_use();
     UserInterface.end();
 	
-	// Create and initialize a shader program // [=> Sylvain's API - wrapper of GL code]
 	shaderProgramTerrain = ShaderProgram(vertexShaderTerrain, fragmentShaderTerrain, 'terrain shader');
 	shaderProgramWater = ShaderProgram(vertexShaderWater, fragmentShaderWater, 'water shader');
     shaderProgramSky = ShaderProgram(vertexShaderSky, fragmentShaderSky, 'skybox shader');
     shaderProgramUI = ShaderProgram(vertexShaderUI, fragmentShaderUI, 'UI shader', 0, 100, 50, update_wgl);
 
-	// Build mesh
 	buildTerrain();
 	buildWater();
     buildUI(gl.canvas.width, gl.canvas.height);
@@ -795,29 +789,30 @@ function draw_wgl()
 	gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
 
 
-    if (checkbox_debug.checked)
-    {
-        /////////////////////////////////////////////
-        shaderProgramUI.bind(); // UI ///////////////
-        /////////////////////////////////////////////
+	// USED THIS FOR DEBUGGING, KINDA LIKE A 2ND SCREEN
+    // if (checkbox_debug.checked)
+    // {
+    //     /////////////////////////////////////////////
+    //     shaderProgramUI.bind(); // UI ///////////////
+    //     /////////////////////////////////////////////
 
-        gl.viewport(0, 0, gl.canvas.width/3, gl.canvas.height/3);
+    //     gl.viewport(0, 0, gl.canvas.width/3, gl.canvas.height/3);
 
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, texReflection);
-        Uniforms.uSamplerReflection = 0;
+    //     gl.activeTexture(gl.TEXTURE0);
+    //     gl.bindTexture(gl.TEXTURE_2D, texReflection);
+    //     Uniforms.uSamplerReflection = 0;
         
-        gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, texRefraction);
-        Uniforms.uSamplerRefraction = 1;
+    //     gl.activeTexture(gl.TEXTURE1);
+    //     gl.bindTexture(gl.TEXTURE_2D, texRefraction);
+    //     Uniforms.uSamplerRefraction = 1;
 
-        gl.activeTexture(gl.TEXTURE2);
-        gl.bindTexture(gl.TEXTURE_2D, texture_normale);
-        Uniforms.uSamplerNormale = 2;
+    //     gl.activeTexture(gl.TEXTURE2);
+    //     gl.bindTexture(gl.TEXTURE_2D, texture_normale);
+    //     Uniforms.uSamplerNormale = 2;
 
-        gl.bindVertexArray(vaoUI);
-        gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
-    }
+    //     gl.bindVertexArray(vaoUI);
+    //     gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
+    // }
 	
 	gl.bindVertexArray(null);
 	gl.useProgram(null);
