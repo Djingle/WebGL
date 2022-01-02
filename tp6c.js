@@ -131,9 +131,12 @@ float dist(vec2 p0, vec2 p1)
 ////////////////////////////////////////////////////////////////////////////////
 void main()
 {
-#define MODE 0
+#define MODE 20
 #if MODE == 0
 	oColor = vec4(texCoord, 0.0, 1.0);
+#elif MODE == 20
+    if (texCoord.x< 0.1 || texCoord.y<0.1 || texCoord.x>0.9 || texCoord.y>0.9) oColor = vec4(179.0, 0.0, 255.0, 255.0)/255.0;
+    else oColor = vec4(0.0,0.0,0.0,0.0);
 #elif MODE == 1
 	vec2 uv = mod(5.0 * texCoord, 1.0);
 	oColor = vec4(uv, 0.0, 1.0);
